@@ -1,5 +1,5 @@
 // Frontend Controller for MySQL Indexing Demo
-// Toàn bộ việc định dạng, hiển thị, quản lý thuật toán và giao diện xử lý tại Client-side
+// Toàn bộ việc định dạng, hiển thị, quản lý 3 thuật toán (B-tree, Hash, Full-Text) tại Client-side
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) =>
@@ -17,85 +17,58 @@ const fmtBytes = (bytes) => {
   return bytes + ' B';
 };
 
-// Danh mục thuật toán chỉ mục (Frontend quản lý hiển thị, lý thuyết & trạng thái)
+// Danh mục 3 thuật toán chỉ mục (B-tree, Hash Index, Full-Text Index)
 const ALGORITHMS = {
   btree: {
     name: 'B-tree Index',
-    badge: 'Đã kích hoạt',
+    badge: 'Đang hoạt động',
     ready: true,
-    summary: '<strong>B-Tree Index</strong> tổ chức dữ liệu thành cây tự cân bằng, các khoá được sắp xếp theo thứ tự. Tốc độ tìm kiếm giảm từ <code>O(n)</code> (quét tuần tự) xuống <code>O(log n)</code>.',
+    summary: '<strong>B-Tree Index</strong> tổ chức dữ liệu thành cây cân bằng, các khoá được giữ theo thứ tự. Tốc độ tìm kiếm giảm từ <code>O(n)</code> (quét tuần tự) xuống <code>O(log n)</code>.',
     pros: [
-      'Tìm chính xác (<code>=</code>) và tìm khoảng (<code>BETWEEN</code>, <code>&gt;</code>, <code>&lt;</code>).',
+      'Tìm kiếm chính xác (<code>=</code>) và tìm khoảng (<code>BETWEEN</code>, <code>&gt;</code>, <code>&lt;</code>).',
       'Tối ưu sắp xếp (<code>ORDER BY</code>) và phân trang (<code>LIMIT</code>).',
       'Hỗ trợ tìm tiền tố chuỗi (<code>LIKE \'abc%\'</code>).'
     ],
     cons: [
-      'Làm chậm thao tác ghi (<code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code> do phải tái cân bằng cây).',
+      'Làm chậm thao tác ghi (<code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code> do phải cân bằng lại cây).',
       'Tốn dung lượng ổ đĩa và RAM (Buffer Pool) để duy trì cây chỉ mục.',
-      'Không áp dụng được cho tìm chuỗi chứa từ bất kỳ (<code>LIKE \'%abc\'</code>).'
+      'Không hỗ trợ tìm chuỗi chứa từ bất kỳ (<code>LIKE \'%abc\'</code>).'
     ]
   },
   hash: {
     name: 'Hash Index',
-    badge: 'Chưa kích hoạt',
-    ready: false,
-    summary: '<strong>Hash Index</strong> sử dụng bảng băm (Hash Table) để ánh xạ khoá tìm kiếm trực tiếp vào địa chỉ bản ghi. Đạt tốc độ truy vấn <code>O(1)</code> lý tưởng.',
+    badge: 'Đang hoạt động',
+    ready: true,
+    summary: '<strong>Hash Index</strong> sử dụng bảng băm (Hash Table) để ánh xạ khoá tìm kiếm trực tiếp vào địa chỉ bản ghi, đạt độ phức tạp lý tưởng <code>O(1)</code> cho phép so sánh bằng.',
     pros: [
-      'Cực nhanh đối với phép so sánh bằng chính xác (<code>=</code> hoặc <code>&lt;=&gt;</code>).',
-      'Thường dùng trong MEMORY storage engine hoặc Adaptive Hash Index của InnoDB.'
+      'Tốc độ cực nhanh đối với phép so sánh bằng chính xác (<code>=</code> hoặc <code>&lt;=&gt;</code>).',
+      'Rất phù hợp cho các khoá định danh duy nhất (ISBN, Mã sản phẩm, ID).'
     ],
     cons: [
-      'Hoàn toàn không hỗ trợ tìm kiếm theo khoảng (<code>BETWEEN</code>, <code>&lt;</code>, <code>&gt;</code>).',
-      'Không hỗ trợ sắp xếp <code>ORDER BY</code>.',
-      'Dễ bị xung đột băm (Hash collision) khi khối lượng dữ liệu lớn.'
-    ]
-  },
-  composite: {
-    name: 'Composite Index (Nhiều cột)',
-    badge: 'Chưa kích hoạt',
-    ready: false,
-    summary: '<strong>Composite Index</strong> là chỉ mục được đánh trên tổ hợp nhiều cột (ví dụ: <code>(genre, year, price)</code>), phục vụ cho các câu truy vấn lọc theo nhiều điều kiện đồng thời.',
-    pros: [
-      'Tối ưu vượt trội cho truy vấn lọc nhiều cột cùng lúc.',
-      'Có thể đạt trạng thái "Covering Index" (lấy dữ liệu trực tiếp trên index mà không cần đọc bảng chính).'
-    ],
-    cons: [
-      'Phải tuân thủ nguyên tắc tiền tố bên trái (Left-most prefix rule).',
-      'Kích thước chỉ mục lớn hơn nhiều so với chỉ mục đơn cột.'
+      'Hoàn toàn không hỗ trợ tìm kiếm khoảng (<code>BETWEEN</code>, <code>&lt;</code>, <code>&gt;</code>).',
+      'Không hỗ trợ sắp xếp kết quả (<code>ORDER BY</code>).',
+      'Dễ bị suy giảm hiệu năng nếu xảy ra xung đột băm (Hash collision).'
     ]
   },
   fulltext: {
     name: 'Full-Text Index',
-    badge: 'Chưa kích hoạt',
-    ready: false,
-    summary: '<strong>Full-Text Index</strong> phân tách văn bản thành các từ tố (tokens) và lập danh mục chỉ mục đảo (Inverted Index) để tìm kiếm từ ngữ trong đoạn văn bản dài.',
+    badge: 'Đang hoạt động',
+    ready: true,
+    summary: '<strong>Full-Text Index</strong> phân tách văn bản thành các từ tố (tokens) và lập danh mục chỉ mục đảo (Inverted Index), cho phép tìm kiếm từ ngữ tự nhiên cực nhanh thay vì quét chậm bằng <code>LIKE \'%...%\'</code>.',
     pros: [
-      'Hỗ trợ tìm kiếm từ khoá tự nhiên với cú pháp <code>MATCH(...) AGAINST(...)</code>.',
-      'Tìm kiếm văn bản nhanh hơn rất nhiều so với dùng <code>LIKE \'%từ_khoá%\'</code>.'
+      'Tìm kiếm từ đơn hoặc cụm từ tức thì bằng cú pháp <code>MATCH(...) AGAINST(...)</code>.',
+      'Tốc độ vượt trội (nhanh hơn hàng chục đến hàng trăm lần) so với quét tuần tự <code>LIKE \'%từ%\'</code>.',
+      'Hỗ trợ tìm kiếm theo toán tử Boolean (<code>+từ_bắt_buộc</code>, <code>-từ_loại_trừ</code>, <code>"cụm từ"</code>).'
     ],
     cons: [
-      'Không áp dụng cho so sánh số học hay khoảng giá trị.',
-      'Tốn tài nguyên tạo và duy trì chỉ mục đảo; bỏ qua các từ dừng (stopwords).'
-    ]
-  },
-  bitmap: {
-    name: 'Bitmap Index',
-    badge: 'Chưa kích hoạt',
-    ready: false,
-    summary: '<strong>Bitmap Index</strong> sử dụng chuỗi bit (0 và 1) cho từng giá trị phân biệt của cột. Thường phổ biến trong các hệ thống Data Warehouse (Oracle, PostgreSQL mở rộng).',
-    pros: [
-      'Cực kỳ tối ưu cho các cột có độ phân biệt thấp (Low Cardinality) như giới tính, trạng thái đơn.',
-      'Các phép toán <code>AND</code>, <code>OR</code>, <code>NOT</code> thực hiện trực tiếp trên phép toán bit ở cấp CPU.'
-    ],
-    cons: [
-      'MySQL / MariaDB InnoDB mặc định không hỗ trợ trực tiếp kiểu index này.',
-      'Chi phí khoá và cập nhật cao khi có nhiều tác vụ ghi đồng thời.'
+      'Chỉ áp dụng cho các cột kiểu chuỗi văn bản (<code>VARCHAR</code>, <code>TEXT</code>).',
+      'Tốn tài nguyên tạo và cập nhật danh mục từ tố đảo; bỏ qua các từ dừng (stopwords).'
     ]
   }
 };
 
 let ROWS = 0;
-let BACKEND_SCENARIOS = [];
+let BACKEND_SCENARIOS = {};
 let CONFIG = {
   apiEndpoint: 'api.php',
   chunkSize: 50000,
@@ -124,11 +97,10 @@ function setStatus(elementId, text, type = '') {
 // Khóa / Mở nút thao tác khi đang bận
 function setBusy(isBusy) {
   $('#genBtn').disabled = isBusy;
-  const currentAlgo = ALGORITHMS[$('#algoSelect').value];
-  $('#runBtn').disabled = isBusy || ROWS === 0 || !currentAlgo?.ready;
+  $('#runBtn').disabled = isBusy || ROWS === 0;
   $('#size').disabled = isBusy;
   $('#algoSelect').disabled = isBusy;
-  $('#scn').disabled = isBusy || !currentAlgo?.ready;
+  $('#scn').disabled = isBusy;
 }
 
 // Wrapper gọi Backend API
@@ -152,7 +124,7 @@ async function api(action, data = {}) {
   return json;
 }
 
-// Hiển thị lý thuyết và cập nhật trạng thái khi người dùng đổi thuật toán
+// Hiển thị lý thuyết và nạp kịch bản khi người dùng đổi thuật toán
 function updateSelectedAlgorithm() {
   const key = $('#algoSelect').value;
   const algo = ALGORITHMS[key] || ALGORITHMS.btree;
@@ -160,8 +132,8 @@ function updateSelectedAlgorithm() {
   // Cập nhật thẻ Knowledge
   $('#algoTitle').textContent = `Hiểu nhanh về ${algo.name}`;
   $('#algoBadge').textContent = algo.badge;
-  $('#algoBadge').style.background = algo.ready ? 'var(--color-accent)' : 'var(--text-dim)';
-  $('#algoBadge').style.color = algo.ready ? '#0f172a' : '#ffffff';
+  $('#algoBadge').style.background = 'var(--color-accent)';
+  $('#algoBadge').style.color = '#0f172a';
 
   $('#algoBody').innerHTML = `
     <p>${algo.summary}</p>
@@ -188,20 +160,22 @@ function updateSelectedAlgorithm() {
     </div>
   `;
 
-  // Cập nhật ô chọn kịch bản và trạng thái chạy
+  // Cập nhật danh sách kịch bản tương ứng với thuật toán
   const scnSelect = $('#scn');
-  if (algo.ready) {
+  const scenarios = BACKEND_SCENARIOS[key] || [];
+
+  if (scenarios.length > 0) {
     scnSelect.disabled = false;
-    scnSelect.innerHTML = BACKEND_SCENARIOS
+    scnSelect.innerHTML = scenarios
       .map((s) => `<option value="${s.key}">${esc(s.name)}</option>`)
       .join('');
     $('#runBtn').disabled = ROWS === 0;
     setStatus('#runStatus', ROWS > 0 ? 'Sẵn sàng chạy kiểm thử so sánh.' : 'Cần tạo dữ liệu trước khi benchmark.');
   } else {
     scnSelect.disabled = true;
-    scnSelect.innerHTML = `<option value="" disabled selected>(Chưa cài đặt kịch bản - bạn có thể tự thêm)</option>`;
+    scnSelect.innerHTML = `<option value="" disabled selected>(Không có kịch bản)</option>`;
     $('#runBtn').disabled = true;
-    setStatus('#runStatus', `Thuật toán "${algo.name}" chưa kích hoạt (để bạn tự bổ sung kịch bản).`, 'err');
+    setStatus('#runStatus', 'Chưa có kịch bản cho thuật toán này.', 'err');
   }
 }
 
@@ -250,14 +224,15 @@ async function generateData() {
 
 // 2. Logic chạy kiểm thử so sánh (Benchmark)
 async function runBenchmark() {
+  const algoKey = $('#algoSelect').value;
   const scenarioKey = $('#scn').value;
   if (!scenarioKey) return;
 
   setBusy(true);
-  setStatus('#runStatus', 'Đang thực thi: Quét tuần tự → Đánh B-tree index → Đo lại...', '');
+  setStatus('#runStatus', 'Đang thực thi: Quét tuần tự → Tạo chỉ mục → Đo lại hiệu năng...', '');
 
   try {
-    const res = await api('run', { scenario: scenarioKey });
+    const res = await api('run', { algo: algoKey, scenario: scenarioKey });
     renderBenchmarkResult(res);
     setStatus('#runStatus', 'Kiểm thử hoàn tất! Index mẫu đã tự động được dọn dẹp.', 'success');
   } catch (err) {
@@ -283,9 +258,28 @@ function renderBenchmarkResult(r) {
   const widthNoIndex = Math.max(1, (timeNoIndex / maxTime) * 100).toFixed(1) + '%';
   const widthWithIndex = Math.max(1, (timeWithIndex / maxTime) * 100).toFixed(1) + '%';
 
-  // Sửa lỗi Temporal Dead Zone (TDZ): tính ratio trước khi gán speedup
   const ratio = timeWithIndex > 0 ? timeNoIndex / timeWithIndex : 1;
   const speedup = ratio.toFixed(ratio >= 10 ? 0 : 1);
+  const algoLabel = r.algo_name || 'Chỉ mục';
+
+  // Hiển thị câu lệnh SQL: nếu 2 câu khác nhau (như Full-text: LIKE vs MATCH) thì so sánh rõ ràng
+  let sqlDisplayHtml = '';
+  if (r.sqlA && r.sqlB && r.sqlA !== r.sqlB) {
+    sqlDisplayHtml = `
+      <div class="sql-compare-box">
+        <div class="sql-sub-box">
+          <span class="sql-tag danger">Không Index (LIKE):</span>
+          <code>${esc(r.sqlA)}</code>
+        </div>
+        <div class="sql-sub-box">
+          <span class="sql-tag success">Có Index (MATCH):</span>
+          <code>${esc(r.sqlB)}</code>
+        </div>
+      </div>
+    `;
+  } else {
+    sqlDisplayHtml = `<div class="sql-box">${esc(r.sql || r.sqlB)}</div>`;
+  }
 
   const card = document.createElement('article');
   card.className = 'result-card';
@@ -296,10 +290,10 @@ function renderBenchmarkResult(r) {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
           </svg>
-          ${esc(r.name)}
+          [${esc(algoLabel)}] ${esc(r.name)}
         </h3>
         <div class="result-meta-badge">
-          Dữ liệu: <strong>${r.n.toLocaleString('vi-VN')} dòng</strong> · Kết quả trả về: <strong>~${r.A.rows} dòng</strong>
+          Dữ liệu: <strong>${r.n.toLocaleString('vi-VN')} dòng</strong> · Kết quả: <strong>~${r.A.rows} dòng</strong>
         </div>
       </div>
       <div class="speedup-badge">
@@ -308,7 +302,7 @@ function renderBenchmarkResult(r) {
       </div>
     </div>
 
-    <div class="sql-box">${esc(r.sql)}</div>
+    ${sqlDisplayHtml}
 
     <div class="benchmark-visualizer">
       <div class="bench-row">
@@ -319,7 +313,7 @@ function renderBenchmarkResult(r) {
         <span class="bench-time danger">${fmtTime(timeNoIndex)}</span>
       </div>
       <div class="bench-row">
-        <span class="bench-label">Có B-tree Index</span>
+        <span class="bench-label">Có ${esc(algoLabel)}</span>
         <div class="bar-track">
           <div class="bar-fill success" style="width: ${widthWithIndex}"></div>
         </div>
@@ -348,7 +342,7 @@ function renderBenchmarkResult(r) {
         <pre>${esc(r.planA)}</pre>
       </div>
       <div class="explain-col">
-        <h4>Kế hoạch thực thi (EXPLAIN với B-Tree Index)</h4>
+        <h4>Kế hoạch thực thi (EXPLAIN với ${esc(algoLabel)})</h4>
         <pre>${esc(r.planB)}</pre>
       </div>
     </div>
@@ -368,7 +362,7 @@ function clearResults() {
         <path d="m19 9-5 5-4-4-3 3"></path>
       </svg>
       <p>Chưa có dữ liệu đo lường.</p>
-      <span>Hãy bấm nút <strong>"Chạy kiểm thử so sánh"</strong> để đối chiếu hiệu năng giữa Full Table Scan và B-tree Index.</span>
+      <span>Hãy chọn thuật toán và bấm nút <strong>"Chạy kiểm thử so sánh"</strong> để đối chiếu hiệu năng.</span>
     </div>
   `;
 }
@@ -380,11 +374,11 @@ async function init() {
   $('#clearBtn').onclick = clearResults;
   $('#algoSelect').onchange = updateSelectedAlgorithm;
 
-  // Render danh sách thuật toán vào dropdown
+  // Render 3 thuật toán vào dropdown
   $('#algoSelect').innerHTML = Object.entries(ALGORITHMS)
     .map(
       ([key, algo]) =>
-        `<option value="${key}">${esc(algo.name)} ${algo.ready ? '(Đang hoạt động)' : '(Chưa kích hoạt)'}</option>`
+        `<option value="${key}">${esc(algo.name)}</option>`
     )
     .join('');
 
@@ -401,7 +395,7 @@ async function init() {
   try {
     const meta = await api('meta');
     ROWS = meta.rows || 0;
-    BACKEND_SCENARIOS = meta.scenarios || [];
+    BACKEND_SCENARIOS = meta.scenarios || {};
 
     // Cập nhật trạng thái DB và giao diện theo thuật toán đang chọn
     if (ROWS > 0) {

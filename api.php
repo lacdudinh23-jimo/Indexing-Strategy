@@ -1,6 +1,6 @@
 <?php
 // Backend API cho demo chỉ mục (Indexing Strategy)
-// Tách biệt hoàn toàn: Backend chỉ xử lý truy vấn và trả dữ liệu JSON thô, không chứa HTML.
+// Hỗ trợ 3 thuật toán: B-tree Index, Hash Index, Full-Text Index
 require_once __DIR__ . '/db.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -18,29 +18,93 @@ function isbnOf($i)
   return str_pad((string)(($i * 48271) % 2147483647), 10, '0', STR_PAD_LEFT);
 }
 
-// Cấu hình các kịch bản truy vấn để benchmark
-$SCENARIOS = [
-  'isbn' => [
-    'name'  => 'Tìm theo ISBN (so sánh bằng =)',
-    'index' => 'idx_books_isbn',
-    'col'   => 'isbn',
-    'query' => fn($n) => "SELECT SQL_NO_CACHE id,title,author,price FROM books WHERE isbn='" . isbnOf(random_int(1, $n)) . "'"
+// Cấu hình danh mục thuật toán và kịch bản truy vấn
+$ALGOS = [
+  'btree' => [
+    'label' => 'B-tree Index',
+    'scenarios' => [
+      'isbn' => [
+        'name'       => 'Tìm theo ISBN (so sánh bằng =)',
+        'index'      => 'idx_books_isbn',
+        'col'        => 'isbn',
+        'index_type' => 'USING BTREE',
+        'query'      => fn($n) => "SELECT SQL_NO_CACHE id,title,author,price FROM books WHERE isbn='" . isbnOf(random_int(1, $n)) . "'"
+      ],
+      'price' => [
+        'name'       => 'Tìm theo khoảng giá (BETWEEN)',
+        'index'      => 'idx_books_price',
+        'col'        => 'price',
+        'index_type' => 'USING BTREE',
+        'query'      => function ($n) {
+          $a = random_int(10000, 490000);
+          return "SELECT SQL_NO_CACHE id,title,price FROM books WHERE price BETWEEN $a AND " . ($a + 500);
+        }
+      ],
+      'title' => [
+        'name'       => '20 sách đầu theo tên (ORDER BY + LIMIT)',
+        'index'      => 'idx_books_title',
+        'col'        => 'title',
+        'index_type' => 'USING BTREE',
+        'query'      => fn($n) => "SELECT SQL_NO_CACHE id,title,author FROM books ORDER BY title LIMIT 20"
+      ],
+    ]
   ],
-  'price' => [
-    'name'  => 'Tìm theo khoảng giá (BETWEEN)',
-    'index' => 'idx_books_price',
-    'col'   => 'price',
-    'query' => function ($n) {
-      $a = random_int(10000, 490000);
-      return "SELECT SQL_NO_CACHE id,title,price FROM books WHERE price BETWEEN $a AND " . ($a + 500);
-    }
+  'hash' => [
+    'label' => 'Hash Index',
+    'scenarios' => [
+      'hash_isbn' => [
+        'name'       => 'Tìm theo ISBN (so sánh bằng = với HASH)',
+        'index'      => 'idx_books_hash_isbn',
+        'col'        => 'isbn',
+        'index_type' => 'USING HASH',
+        'query'      => fn($n) => "SELECT SQL_NO_CACHE id,title,author,price FROM books WHERE isbn='" . isbnOf(random_int(1, $n)) . "'"
+      ],
+      'hash_year' => [
+        'name'       => 'Tìm theo năm xuất bản (= với HASH)',
+        'index'      => 'idx_books_hash_year',
+        'col'        => 'year',
+        'index_type' => 'USING HASH',
+        'query'      => fn($n) => "SELECT SQL_NO_CACHE id,title,author,price FROM books WHERE year=" . random_int(1950, 2025)
+      ],
+    ]
   ],
-  'title' => [
-    'name'  => '20 sách đầu theo tên (ORDER BY + LIMIT)',
-    'index' => 'idx_books_title',
-    'col'   => 'title',
-    'query' => fn($n) => "SELECT SQL_NO_CACHE id,title,author FROM books ORDER BY title LIMIT 20"
-  ],
+  'fulltext' => [
+    'label' => 'Full-Text Index',
+    'scenarios' => [
+      'ft_word' => [
+        'name'       => 'Tìm từ đơn trong tên sách (MATCH AGAINST vs LIKE)',
+        'index'      => 'idx_books_ft_title',
+        'col'        => 'title',
+        'index_type' => 'FULLTEXT',
+        'query_no_index' => function ($n) {
+          $words = ['Biển', 'Núi', 'Thành phố', 'Ký ức', 'Hành trình', 'Giấc mơ'];
+          $w = $words[array_rand($words)];
+          return "SELECT SQL_NO_CACHE id,title,author FROM books WHERE title LIKE '%$w%'";
+        },
+        'query_with_index' => function ($n, $sqlNoIndex) {
+          preg_match("/LIKE '%(.*)%'/", $sqlNoIndex, $matches);
+          $w = $matches[1] ?? 'Biển';
+          return "SELECT SQL_NO_CACHE id,title,author FROM books WHERE MATCH(title) AGAINST('+$w' IN BOOLEAN MODE)";
+        }
+      ],
+      'ft_phrase' => [
+        'name'       => 'Tìm cụm từ chính xác ("Mùa thu", "Bất tận")',
+        'index'      => 'idx_books_ft_title',
+        'col'        => 'title',
+        'index_type' => 'FULLTEXT',
+        'query_no_index' => function ($n) {
+          $phrases = ['Mùa thu', 'Ngủ quên', 'Lái đò', 'Bất tận'];
+          $p = $phrases[array_rand($phrases)];
+          return "SELECT SQL_NO_CACHE id,title,author FROM books WHERE title LIKE '%$p%'";
+        },
+        'query_with_index' => function ($n, $sqlNoIndex) {
+          preg_match("/LIKE '%(.*)%'/", $sqlNoIndex, $matches);
+          $p = $matches[1] ?? 'Mùa thu';
+          return "SELECT SQL_NO_CACHE id,title,author FROM books WHERE MATCH(title) AGAINST('\"$p\"' IN BOOLEAN MODE)";
+        }
+      ],
+    ]
+  ]
 ];
 
 function plan($db, $sql)
@@ -80,15 +144,18 @@ function bench($db, $mk, $min)
 
 $action = $_POST['action'] ?? 'meta';
 
-// 1. Lấy thông tin số dòng và danh sách kịch bản truy vấn (chỉ dữ liệu thô)
+// 1. Lấy thông tin số dòng và danh sách kịch bản truy vấn phân theo thuật toán
 if ($action === 'meta') {
   $scenarios = [];
-  foreach ($SCENARIOS as $key => $s) {
-    $scenarios[] = [
-      'key'  => $key,
-      'name' => $s['name'],
-      'col'  => $s['col']
-    ];
+  foreach ($ALGOS as $algoKey => $a) {
+    $scenarios[$algoKey] = [];
+    foreach ($a['scenarios'] as $sKey => $s) {
+      $scenarios[$algoKey][] = [
+        'key'  => $sKey,
+        'name' => $s['name'],
+        'col'  => $s['col']
+      ];
+    }
   }
   out([
     'rows'      => dbRows($db),
@@ -112,7 +179,7 @@ if ($action === 'gen') {
   $W2 = ['Mèn', 'Thấy', 'Gái', 'Lái đò', 'Chim', 'Hoa', 'Xa', 'Xanh', 'Cao', 'Ngủ quên', 'Mùa thu', 'Cuối', 'Đêm', 'Nhỏ', 'Bất tận'];
   $AU = ['Nguyễn Nhật Ánh', 'Tô Hoài', 'Nam Cao', 'Ngô Tất Tố', 'Xuân Diệu', 'Nguyễn Du', 'Vũ Trọng Phụng', 'Bảo Ninh', 'Dương Thu Hương', 'Nguyễn Huy Thiệp'];
   $GE = ['Tiểu thuyết', 'Truyện ngắn', 'Thiếu nhi', 'Trinh thám', 'Lịch sử', 'Khoa học', 'Kinh tế'];
-  
+
   $db->begin_transaction();
   for ($s = $from; $s <= $to; $s += 1000) {
     $vals = [];
@@ -131,42 +198,72 @@ if ($action === 'gen') {
 
 // 4. Chạy benchmark so sánh có index và không có index
 if ($action === 'run') {
+  $algoKey = $_POST['algo'] ?? 'btree';
   $scenarioKey = $_POST['scenario'] ?? '';
-  $sc = $SCENARIOS[$scenarioKey] ?? null;
+
+  $algo = $ALGOS[$algoKey] ?? null;
+  if (!$algo) out(['error' => 'Thuật toán không hợp lệ'], 400);
+
+  $sc = $algo['scenarios'][$scenarioKey] ?? null;
   if (!$sc) out(['error' => 'Kịch bản truy vấn không hợp lệ'], 400);
 
   $n = dbRows($db);
-  if ($n < 1) out(['error' => 'Chưa có dữ liệu. Bấm "Tạo dữ liệu" trước.'], 400);
+  if ($n < 1) out(['error' => 'Chưa có dữ liệu. Bấm "Tạo lại dữ liệu mẫu" trước.'], 400);
 
-  $mk = fn() => $sc['query']($n);
   $idx = $sc['index'];
+  $col = $sc['col'];
+  $idxType = $sc['index_type'] ?? 'USING BTREE';
 
-  // Đo lúc KHÔNG có index
+  // Chuẩn bị câu lệnh SQL
+  if (isset($sc['query_no_index'])) {
+    $sqlA = $sc['query_no_index']($n);
+    $sqlB = $sc['query_with_index']($n, $sqlA);
+  } else {
+    $sqlA = $sc['query']($n);
+    $sqlB = $sqlA;
+  }
+
+  $mkA = fn() => $sqlA;
+  $mkB = fn() => $sqlB;
+
+  // 1. Đo khi KHÔNG có index
   $db->query("DROP INDEX $idx ON books");
   $db->query('ANALYZE TABLE books');
-  $planA = plan($db, $mk());
-  $A = bench($db, $mk, 2);
+  $planA = plan($db, $mkA());
+  $A = bench($db, $mkA, 2);
 
-  // Tạo index và đo lúc CÓ index
+  // 2. Tạo index và đo thời gian build
   $t = hrtime(true);
-  if (!$db->query("CREATE INDEX $idx USING BTREE ON books({$sc['col']})")) out(['error' => $db->error], 500);
-  $build = (hrtime(true) - $t) / 1e6;
-  $db->query('ANALYZE TABLE books');
-  $planB = plan($db, $mk());
-  $B = bench($db, $mk, 50);
+  $createSql = ($idxType === 'FULLTEXT')
+    ? "CREATE FULLTEXT INDEX $idx ON books($col)"
+    : "CREATE INDEX $idx $idxType ON books($col)";
 
-  // Lấy dung lượng index
+  if (!$db->query($createSql)) {
+    out(['error' => 'Lỗi tạo index: ' . $db->error], 500);
+  }
+  $build = (hrtime(true) - $t) / 1e6;
+
+  // 3. Đo khi CÓ index
+  $db->query('ANALYZE TABLE books');
+  $planB = plan($db, $mkB());
+  $B = bench($db, $mkB, 50);
+
+  // 4. Lấy dung lượng index
   @$db->query('SET SESSION information_schema_stats_expiry=0');
   $q = $db->query("SELECT INDEX_LENGTH FROM information_schema.TABLES WHERE TABLE_SCHEMA='" . DB_NAME . "' AND TABLE_NAME='books'")->fetch_row();
   $size = (int)($q[0] ?? 0);
 
-  // Dọn dẹp index sau khi đo xong
+  // 5. Dọn dẹp index sau khi đo xong
   $db->query("DROP INDEX $idx ON books");
 
   out([
+    'algo'        => $algoKey,
+    'algo_name'   => $algo['label'],
     'scenario'    => $scenarioKey,
     'name'        => $sc['name'],
-    'sql'         => preg_replace('/ SQL_NO_CACHE/', '', $mk()),
+    'sql'         => preg_replace('/ SQL_NO_CACHE/', '', $sqlB),
+    'sqlA'        => preg_replace('/ SQL_NO_CACHE/', '', $sqlA),
+    'sqlB'        => preg_replace('/ SQL_NO_CACHE/', '', $sqlB),
     'n'           => $n,
     'A'           => $A,
     'B'           => $B,

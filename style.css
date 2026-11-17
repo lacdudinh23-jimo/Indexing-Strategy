@@ -558,6 +558,45 @@ select:focus {
   overflow-x: auto;
 }
 
+.sql-compare-box {
+  background: var(--bg-code);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sql-sub-box {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sql-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.sql-tag.danger {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.sql-tag.success {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
 /* Comparison Visualizer */
 .benchmark-visualizer {
   display: flex;
