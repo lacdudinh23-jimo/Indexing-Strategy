@@ -1,6 +1,6 @@
 <?php
 // Backend API cho demo chỉ mục (Indexing Strategy)
-// Hỗ trợ 3 thuật toán: B-tree Index, Hash Index, Full-Text Index
+// Hỗ trợ 4 thuật toán: B-tree Index, Hash Index, Full-Text Index, R-tree (Spatial Index)
 require_once __DIR__ . '/db.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -104,6 +104,62 @@ $ALGOS = [
         }
       ],
     ]
+  ],
+  'rtree' => [
+    'label' => 'R-tree (Spatial Index)',
+    'scenarios' => [
+      'rtree_contains' => [
+        'name'       => 'ST_Contains() – Đa giác bao chứa toạ độ sách',
+        'index'      => 'idx_books_location',
+        'col'        => 'location',
+        'index_type' => 'SPATIAL',
+        'query'      => function ($n) {
+          $lat = random_int(10720, 10760) / 1000;
+          $lng = random_int(106620, 106660) / 1000;
+          $d = 0.035;
+          $p1 = "$lat $lng";
+          $p2 = ($lat + $d) . " $lng";
+          $p3 = ($lat + $d) . " " . ($lng + $d);
+          $p4 = "$lat " . ($lng + $d);
+          $poly = "POLYGON(($p1, $p2, $p3, $p4, $p1))";
+          return "SELECT SQL_NO_CACHE id,title,author,ST_AsText(location) as coords FROM books WHERE ST_Contains(ST_GeomFromText('$poly'), location)";
+        }
+      ],
+      'rtree_within' => [
+        'name'       => 'ST_Within() – Toạ độ sách nằm trong ranh giới đa giác',
+        'index'      => 'idx_books_location',
+        'col'        => 'location',
+        'index_type' => 'SPATIAL',
+        'query'      => function ($n) {
+          $lat = random_int(10720, 10760) / 1000;
+          $lng = random_int(106620, 106660) / 1000;
+          $d = 0.035;
+          $p1 = "$lat $lng";
+          $p2 = ($lat + $d) . " $lng";
+          $p3 = ($lat + $d) . " " . ($lng + $d);
+          $p4 = "$lat " . ($lng + $d);
+          $poly = "POLYGON(($p1, $p2, $p3, $p4, $p1))";
+          return "SELECT SQL_NO_CACHE id,title,author,ST_AsText(location) as coords FROM books WHERE ST_Within(location, ST_GeomFromText('$poly'))";
+        }
+      ],
+      'rtree_intersects' => [
+        'name'       => 'ST_Intersects() – Vùng không gian giao cắt với sách',
+        'index'      => 'idx_books_location',
+        'col'        => 'location',
+        'index_type' => 'SPATIAL',
+        'query'      => function ($n) {
+          $lat = random_int(10720, 10760) / 1000;
+          $lng = random_int(106620, 106660) / 1000;
+          $d = 0.035;
+          $p1 = "$lat $lng";
+          $p2 = ($lat + $d) . " $lng";
+          $p3 = ($lat + $d) . " " . ($lng + $d);
+          $p4 = "$lat " . ($lng + $d);
+          $poly = "POLYGON(($p1, $p2, $p3, $p4, $p1))";
+          return "SELECT SQL_NO_CACHE id,title,author,ST_AsText(location) as coords FROM books WHERE ST_Intersects(location, ST_GeomFromText('$poly'))";
+        }
+      ],
+    ]
   ]
 ];
 
@@ -169,7 +225,7 @@ if ($action === 'reset') {
   out(['ok' => true]);
 }
 
-// 3. Sinh dữ liệu mẫu theo block
+// 3. Sinh dữ liệu mẫu theo block (kèm toạ độ địa lý thực tế)
 if ($action === 'gen') {
   $from = max(1, (int)($_POST['from'] ?? 1));
   $to = (int)($_POST['to'] ?? 0);
@@ -185,9 +241,11 @@ if ($action === 'gen') {
     $vals = [];
     for ($i = $s; $i <= min($s + 999, $to); $i++) {
       $title = $db->real_escape_string($W1[array_rand($W1)] . ' ' . $W2[array_rand($W2)] . ' ' . random_int(0, 99999));
-      $vals[] = "($i,'" . isbnOf($i) . "','$title','" . $db->real_escape_string($AU[array_rand($AU)]) . "','" . $db->real_escape_string($GE[array_rand($GE)]) . "'," . random_int(1950, 2025) . ',' . random_int(10000, 500000) . ')';
+      $lat = random_int(107000, 108500) / 10000;
+      $lng = random_int(1066000, 1067500) / 10000;
+      $vals[] = "($i,'" . isbnOf($i) . "','$title','" . $db->real_escape_string($AU[array_rand($AU)]) . "','" . $db->real_escape_string($GE[array_rand($GE)]) . "'," . random_int(1950, 2025) . ',' . random_int(10000, 500000) . ",ST_GeomFromText('POINT($lat $lng)'))";
     }
-    if (!$db->query('INSERT INTO books (id,isbn,title,author,genre,year,price) VALUES ' . implode(',', $vals))) {
+    if (!$db->query('INSERT INTO books (id,isbn,title,author,genre,year,price,location) VALUES ' . implode(',', $vals))) {
       $db->rollback();
       out(['error' => $db->error], 500);
     }
@@ -234,9 +292,13 @@ if ($action === 'run') {
 
   // 2. Tạo index và đo thời gian build
   $t = hrtime(true);
-  $createSql = ($idxType === 'FULLTEXT')
-    ? "CREATE FULLTEXT INDEX $idx ON books($col)"
-    : "CREATE INDEX $idx $idxType ON books($col)";
+  if ($idxType === 'FULLTEXT') {
+    $createSql = "CREATE FULLTEXT INDEX $idx ON books($col)";
+  } elseif ($idxType === 'SPATIAL') {
+    $createSql = "CREATE SPATIAL INDEX $idx ON books($col)";
+  } else {
+    $createSql = "CREATE INDEX $idx $idxType ON books($col)";
+  }
 
   if (!$db->query($createSql)) {
     out(['error' => 'Lỗi tạo index: ' . $db->error], 500);

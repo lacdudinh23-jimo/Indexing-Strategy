@@ -1,5 +1,5 @@
 // Frontend Controller for MySQL Indexing Demo
-// Toàn bộ việc định dạng, hiển thị, quản lý 3 thuật toán (B-tree, Hash, Full-Text) tại Client-side
+// Toàn bộ việc định dạng, hiển thị, quản lý 4 thuật toán (B-tree, Hash, Full-Text, R-tree) tại Client-side
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) =>
@@ -17,7 +17,7 @@ const fmtBytes = (bytes) => {
   return bytes + ' B';
 };
 
-// Danh mục 3 thuật toán chỉ mục (B-tree, Hash Index, Full-Text Index)
+// Danh mục 4 thuật toán chỉ mục (B-tree, Hash Index, Full-Text Index, R-tree Index)
 const ALGORITHMS = {
   btree: {
     name: 'B-tree Index',
@@ -63,6 +63,21 @@ const ALGORITHMS = {
     cons: [
       'Chỉ áp dụng cho các cột kiểu chuỗi văn bản (<code>VARCHAR</code>, <code>TEXT</code>).',
       'Tốn tài nguyên tạo và cập nhật danh mục từ tố đảo; bỏ qua các từ dừng (stopwords).'
+    ]
+  },
+  rtree: {
+    name: 'R-tree (Spatial Index)',
+    badge: 'Đang hoạt động',
+    ready: true,
+    summary: '<strong>R-Tree (Spatial Index)</strong> tổ chức dữ liệu không gian nhiều chiều theo các hình chữ nhật bao tối thiểu (MBR - Minimum Bounding Rectangle). Cực kỳ tối ưu khi tìm kiếm vị trí tọa độ địa lý (GIS).',
+    pros: [
+      'Cực kỳ tối ưu cho các phép tính toán hình học: <code>ST_Contains()</code>, <code>ST_Within()</code>, <code>ST_Intersects()</code>.',
+      'Loại bỏ nhanh chóng các khu vực không liên quan nhờ cấu trúc cây phân nhánh MBR.',
+      'Chuẩn chỉ mục không gian quốc tế được tích hợp sẵn trong MySQL InnoDB.'
+    ],
+    cons: [
+      'Chỉ áp dụng cho các kiểu dữ liệu không gian (<code>POINT</code>, <code>POLYGON</code>, <code>GEOMETRY</code>) và cột bắt buộc phải có thuộc tính <code>NOT NULL</code>.',
+      'Chi phí tính toán tái cấu trúc cây khi chèn/sửa/xoá (INSERT/UPDATE) dữ liệu không gian tương đối cao.'
     ]
   }
 };
@@ -374,7 +389,7 @@ async function init() {
   $('#clearBtn').onclick = clearResults;
   $('#algoSelect').onchange = updateSelectedAlgorithm;
 
-  // Render 3 thuật toán vào dropdown
+  // Render 4 thuật toán vào dropdown
   $('#algoSelect').innerHTML = Object.entries(ALGORITHMS)
     .map(
       ([key, algo]) =>

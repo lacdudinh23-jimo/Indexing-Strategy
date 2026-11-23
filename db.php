@@ -18,7 +18,7 @@ $db->query('CREATE DATABASE IF NOT EXISTS `' . DB_NAME . '` CHARACTER SET utf8mb
 $db->select_db(DB_NAME);
 
 /**
- * Tạo mới hoặc reset lại bảng books với cấu hình InnoDB
+ * Tạo mới hoặc reset lại bảng books với cấu hình InnoDB, có hỗ trợ cột toạ độ không gian (location POINT NOT NULL)
  */
 function resetBooksTable($db) {
   $db->query('DROP TABLE IF EXISTS books');
@@ -29,7 +29,8 @@ function resetBooksTable($db) {
     author VARCHAR(60) NOT NULL,
     genre VARCHAR(30) NOT NULL,
     year SMALLINT NOT NULL,
-    price INT NOT NULL
+    price INT NOT NULL,
+    location POINT NOT NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 }
 

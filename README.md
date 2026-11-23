@@ -1,13 +1,17 @@
 # MySQL Indexing Strategy – Benchmark & Visualizer
 
-Ứng dụng web trực quan hóa và đo lường (benchmark) hiệu năng truy vấn trên MySQL (InnoDB engine) với 3 chiến lược chỉ mục: **B-Tree Index**, **Hash Index**, và **Full-Text Index**.
+Ứng dụng web trực quan hóa và đo lường (benchmark) hiệu năng truy vấn trên MySQL (InnoDB engine) với 4 chiến lược chỉ mục:
+1. **B-Tree Index** (Cây cân bằng)
+2. **Hash Index** (Bảng băm)
+3. **Full-Text Index** (Chỉ mục toàn văn)
+4. **R-Tree Index** (Spatial Index - Chỉ mục không gian đa chiều)
 
 ---
 
 ## 1. Yêu cầu hệ thống
 
 - **PHP**: Phiên bản 7.4 trở lên (khuyến nghị PHP 8.x) đã bật extension `mysqli`.
-- **MySQL / MariaDB**: Phiên bản 5.7+ hoặc 8.0+ đang chạy (mặc định InnoDB).
+- **MySQL / MariaDB**: Phiên bản 5.7+ hoặc 8.0+ đang chạy (hỗ trợ InnoDB Spatial & Full-Text).
 - **Trình duyệt web**: Chrome, Firefox, Edge,...
 
 ---
@@ -20,7 +24,7 @@ Mở file [`db.php`](db.php) và kiểm tra/chỉnh sửa thông số kết nố
 const DB_HOST = '127.0.0.1', DB_USER = 'root', DB_PASS = '', DB_NAME = 'index_demo';
 ```
 
-> **Lưu ý:** Database `index_demo` và bảng `books` sẽ được hệ thống tự động khởi tạo khi kết nối thành công, bạn không cần tạo trước thủ công.
+> **Lưu ý:** Database `index_demo` và bảng `books` (kèm cột `location POINT NOT NULL`) sẽ được hệ thống tự động khởi tạo khi kết nối thành công, bạn không cần tạo trước thủ công.
 
 ---
 
@@ -47,11 +51,11 @@ const DB_HOST = '127.0.0.1', DB_USER = 'root', DB_PASS = '', DB_NAME = 'index_de
 
 ---
 
-## 4. Hướng dẫn sử dụng & 3 Chiến lược Index hỗ trợ
+## 4. Hướng dẫn sử dụng & 4 Chiến lược Index hỗ trợ
 
 1. **Sinh dữ liệu thử nghiệm:**
    - Chọn số lượng bản ghi (100.000, 500.000 hoặc 1.000.000 dòng).
-   - Bấm **Tạo lại dữ liệu mẫu**.
+   - Bấm **Tạo lại dữ liệu mẫu** (tự động sinh kèm toạ độ địa lý GIS thực tế cho mỗi cuốn sách).
 
 2. **Chọn thuật toán & Kịch bản thử nghiệm:**
    - **B-tree Index:**
@@ -64,9 +68,13 @@ const DB_HOST = '127.0.0.1', DB_USER = 'root', DB_PASS = '', DB_NAME = 'index_de
    - **Full-Text Index:**
      - *Tìm từ đơn trong tên sách* (`MATCH(...) AGAINST(...)` so sánh trực tiếp với quét `LIKE '%từ%'`).
      - *Tìm cụm từ chính xác* (Tìm cụm từ bằng `MATCH` vs `LIKE '%cụm từ%'`).
+   - **R-tree (Spatial Index):**
+     - *ST_Contains()*: Tìm sách nằm trong đa giác bao quanh khu vực.
+     - *ST_Within()*: Tìm sách có toạ độ nằm trong ranh giới đa giác.
+     - *ST_Intersects()*: Tìm sách có vị trí toạ độ giao cắt / trùng khớp với vùng không gian.
 
 3. **Đọc kết quả so sánh:**
-   - **Tốc độ truy vấn:** So sánh thời gian thực thi giữa **Không có Index** và **Có Index**.
+   - **Tốc độ truy vấn:** So sánh thời gian thực thi giữa **Không có Index** (Full Scan) và **Có Index** (B-tree / Hash / Fulltext / Spatial R-Tree).
    - **EXPLAIN Plan:** Xem chi tiết kế hoạch thực thi của MySQL (`ALL` vs `ref`, `range`, `fulltext`).
    - **Chi phí (Trade-offs):** Thời gian build index và dung lượng đĩa chiếm dụng.
 
@@ -79,7 +87,7 @@ const DB_HOST = '127.0.0.1', DB_USER = 'root', DB_PASS = '', DB_NAME = 'index_de
 ├── style.css      # Giao diện CSS hiện đại (Dark/Modern theme)
 ├── script.js      # Xử lý tương tác frontend, gọi API và biểu đồ
 ├── api.php        # Backend API xử lý benchmark, EXPLAIN và sinh dữ liệu
-├── db.php         # Quản lý kết nối cơ sở dữ liệu MySQL
+├── db.php         # Quản lý kết nối cơ sở dữ liệu MySQL (hỗ trợ POINT geometry)
 ├── config.json    # Cấu hình chunk size và các mốc dữ liệu
 └── README.md      # Tài liệu hướng dẫn sử dụng
 ```
