@@ -1,5 +1,31 @@
 // Frontend Controller for MySQL Indexing Demo
-// Toàn bộ việc định dạng, hiển thị, quản lý 4 thuật toán (B-tree, Hash, Full-Text, R-tree) tại Client-side
+// Xử lý toàn bộ tương tác người dùng, gọi API, theo dõi tiến trình và hiển thị trực quan kết quả đo lường.
+
+/**
+ * ============================================================================
+ * FRONTEND EXECUTION FLOW:
+ * ============================================================================
+ * 1. Khởi tạo (init):
+ *    - Gán sự kiện click cho các nút: Sinh dữ liệu (#genBtn), Chạy thử (#runBtn), Xoá kết quả (#clearBtn).
+ *    - Nạp danh mục 4 thuật toán từ `algorithms-data.js` vào dropdown #algoSelect.
+ *    - Đọc cấu hình từ `config.json` (nếu có).
+ *    - Gọi `api('meta')` để kiểm tra kết nối DB, lấy số dòng hiện có và nạp các kịch bản tương ứng.
+ * 
+ * 2. Thay đổi thuật toán (updateSelectedAlgorithm):
+ *    - Đọc dữ liệu từ `ALGORITHMS` (trong algorithms-data.js) và render lý thuyết (Điểm mạnh / Hạn chế) vào #algoBody.
+ *    - Nạp danh sách kịch bản (Scenarios) tương ứng vào dropdown #scn.
+ * 
+ * 3. Sinh dữ liệu mẫu (generateData):
+ *    - Reset bảng books qua API action `reset`.
+ *    - Lặp chèn dữ liệu theo khối (chunkSize = 50.000 dòng/lần) qua API action `gen`.
+ *    - Cập nhật thanh tiến trình #progressBar theo từng lô cho tới khi đạt 100%.
+ * 
+ * 4. Chạy kiểm thử so sánh (runBenchmark):
+ *    - Gửi yêu cầu đo lường (algo, scenario) qua API action `run`.
+ *    - Nhận thời gian thực thi (A: Không index vs B: Có index), dung lượng index và EXPLAIN.
+ *    - Gọi `renderBenchmarkResult()` để chèn card kết quả và biểu đồ thanh (bar visualizer) lên đầu danh sách.
+ * ============================================================================
+ */
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) =>
@@ -17,70 +43,8 @@ const fmtBytes = (bytes) => {
   return bytes + ' B';
 };
 
-// Danh mục 4 thuật toán chỉ mục (B-tree, Hash Index, Full-Text Index, R-tree Index)
-const ALGORITHMS = {
-  btree: {
-    name: 'B-tree Index',
-    badge: 'Đang hoạt động',
-    ready: true,
-    summary: '<strong>B-Tree Index</strong> tổ chức dữ liệu thành cây cân bằng, các khoá được giữ theo thứ tự. Tốc độ tìm kiếm giảm từ <code>O(n)</code> (quét tuần tự) xuống <code>O(log n)</code>.',
-    pros: [
-      'Tìm kiếm chính xác (<code>=</code>) và tìm khoảng (<code>BETWEEN</code>, <code>&gt;</code>, <code>&lt;</code>).',
-      'Tối ưu sắp xếp (<code>ORDER BY</code>) và phân trang (<code>LIMIT</code>).',
-      'Hỗ trợ tìm tiền tố chuỗi (<code>LIKE \'abc%\'</code>).'
-    ],
-    cons: [
-      'Làm chậm thao tác ghi (<code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code> do phải cân bằng lại cây).',
-      'Tốn dung lượng ổ đĩa và RAM (Buffer Pool) để duy trì cây chỉ mục.',
-      'Không hỗ trợ tìm chuỗi chứa từ bất kỳ (<code>LIKE \'%abc\'</code>).'
-    ]
-  },
-  hash: {
-    name: 'Hash Index',
-    badge: 'Đang hoạt động',
-    ready: true,
-    summary: '<strong>Hash Index</strong> sử dụng bảng băm (Hash Table) để ánh xạ khoá tìm kiếm trực tiếp vào địa chỉ bản ghi, đạt độ phức tạp lý tưởng <code>O(1)</code> cho phép so sánh bằng.',
-    pros: [
-      'Tốc độ cực nhanh đối với phép so sánh bằng chính xác (<code>=</code> hoặc <code>&lt;=&gt;</code>).',
-      'Rất phù hợp cho các khoá định danh duy nhất (ISBN, Mã sản phẩm, ID).'
-    ],
-    cons: [
-      'Hoàn toàn không hỗ trợ tìm kiếm khoảng (<code>BETWEEN</code>, <code>&lt;</code>, <code>&gt;</code>).',
-      'Không hỗ trợ sắp xếp kết quả (<code>ORDER BY</code>).',
-      'Dễ bị suy giảm hiệu năng nếu xảy ra xung đột băm (Hash collision).'
-    ]
-  },
-  fulltext: {
-    name: 'Full-Text Index',
-    badge: 'Đang hoạt động',
-    ready: true,
-    summary: '<strong>Full-Text Index</strong> phân tách văn bản thành các từ tố (tokens) và lập danh mục chỉ mục đảo (Inverted Index), cho phép tìm kiếm từ ngữ tự nhiên cực nhanh thay vì quét chậm bằng <code>LIKE \'%...%\'</code>.',
-    pros: [
-      'Tìm kiếm từ đơn hoặc cụm từ tức thì bằng cú pháp <code>MATCH(...) AGAINST(...)</code>.',
-      'Tốc độ vượt trội (nhanh hơn hàng chục đến hàng trăm lần) so với quét tuần tự <code>LIKE \'%từ%\'</code>.',
-      'Hỗ trợ tìm kiếm theo toán tử Boolean (<code>+từ_bắt_buộc</code>, <code>-từ_loại_trừ</code>, <code>"cụm từ"</code>).'
-    ],
-    cons: [
-      'Chỉ áp dụng cho các cột kiểu chuỗi văn bản (<code>VARCHAR</code>, <code>TEXT</code>).',
-      'Tốn tài nguyên tạo và cập nhật danh mục từ tố đảo; bỏ qua các từ dừng (stopwords).'
-    ]
-  },
-  rtree: {
-    name: 'R-tree (Spatial Index)',
-    badge: 'Đang hoạt động',
-    ready: true,
-    summary: '<strong>R-Tree (Spatial Index)</strong> tổ chức dữ liệu không gian nhiều chiều theo các hình chữ nhật bao tối thiểu (MBR - Minimum Bounding Rectangle). Cực kỳ tối ưu khi tìm kiếm vị trí tọa độ địa lý (GIS).',
-    pros: [
-      'Cực kỳ tối ưu cho các phép tính toán hình học: <code>ST_Contains()</code>, <code>ST_Within()</code>, <code>ST_Intersects()</code>.',
-      'Loại bỏ nhanh chóng các khu vực không liên quan nhờ cấu trúc cây phân nhánh MBR.',
-      'Chuẩn chỉ mục không gian quốc tế được tích hợp sẵn trong MySQL InnoDB.'
-    ],
-    cons: [
-      'Chỉ áp dụng cho các kiểu dữ liệu không gian (<code>POINT</code>, <code>POLYGON</code>, <code>GEOMETRY</code>) và cột bắt buộc phải có thuộc tính <code>NOT NULL</code>.',
-      'Chi phí tính toán tái cấu trúc cây khi chèn/sửa/xoá (INSERT/UPDATE) dữ liệu không gian tương đối cao.'
-    ]
-  }
-};
+// Dữ liệu thuật toán được nạp từ algorithms-data.js (fallback an toàn nếu chưa load)
+const ALGOS_REF = typeof ALGORITHMS !== 'undefined' ? ALGORITHMS : {};
 
 let ROWS = 0;
 let BACKEND_SCENARIOS = {};
@@ -142,16 +106,19 @@ async function api(action, data = {}) {
 // Hiển thị lý thuyết và nạp kịch bản khi người dùng đổi thuật toán
 function updateSelectedAlgorithm() {
   const key = $('#algoSelect').value;
-  const algo = ALGORITHMS[key] || ALGORITHMS.btree;
+  const algo = ALGOS_REF[key] || ALGOS_REF.btree || {};
 
   // Cập nhật thẻ Knowledge
-  $('#algoTitle').textContent = `Hiểu nhanh về ${algo.name}`;
-  $('#algoBadge').textContent = algo.badge;
+  $('#algoTitle').textContent = `Hiểu nhanh về ${algo.name || key}`;
+  $('#algoBadge').textContent = algo.badge || 'Đang hoạt động';
   $('#algoBadge').style.background = 'var(--color-accent)';
   $('#algoBadge').style.color = '#0f172a';
 
+  const prosList = (algo.pros || []).map((p) => `<li>${p}</li>`).join('');
+  const consList = (algo.cons || []).map((c) => `<li>${c}</li>`).join('');
+
   $('#algoBody').innerHTML = `
-    <p>${algo.summary}</p>
+    <p>${algo.summary || ''}</p>
     <div class="knowledge-grid">
       <div class="feature-box pros">
         <div class="feature-title">
@@ -160,7 +127,7 @@ function updateSelectedAlgorithm() {
           </svg>
           Điểm mạnh
         </div>
-        <ul>${algo.pros.map((p) => `<li>${p}</li>`).join('')}</ul>
+        <ul>${prosList}</ul>
       </div>
       <div class="feature-box cons">
         <div class="feature-title">
@@ -170,7 +137,7 @@ function updateSelectedAlgorithm() {
           </svg>
           Hạn chế &amp; Chi phí
         </div>
-        <ul>${algo.cons.map((c) => `<li>${c}</li>`).join('')}</ul>
+        <ul>${consList}</ul>
       </div>
     </div>
   `;
@@ -390,7 +357,7 @@ async function init() {
   $('#algoSelect').onchange = updateSelectedAlgorithm;
 
   // Render 4 thuật toán vào dropdown
-  $('#algoSelect').innerHTML = Object.entries(ALGORITHMS)
+  $('#algoSelect').innerHTML = Object.entries(ALGOS_REF)
     .map(
       ([key, algo]) =>
         `<option value="${key}">${esc(algo.name)}</option>`

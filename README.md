@@ -80,14 +80,65 @@ const DB_HOST = '127.0.0.1', DB_USER = 'root', DB_PASS = '', DB_NAME = 'index_de
 
 ---
 
-## 5. Cấu trúc thư mục
+## 5. Cấu trúc thư mục & Phân bổ trách nhiệm
 
 ```text
-├── index.html     # Giao diện người dùng (Dashboard & Visualizer)
-├── style.css      # Giao diện CSS hiện đại (Dark/Modern theme)
-├── script.js      # Xử lý tương tác frontend, gọi API và biểu đồ
-├── api.php        # Backend API xử lý benchmark, EXPLAIN và sinh dữ liệu
-├── db.php         # Quản lý kết nối cơ sở dữ liệu MySQL (hỗ trợ POINT geometry)
-├── config.json    # Cấu hình chunk size và các mốc dữ liệu
-└── README.md      # Tài liệu hướng dẫn sử dụng
+├── index.html          # Giao diện người dùng (Dashboard & Visualizer)
+├── style.css           # Giao diện CSS hiện đại (Dark/Modern theme)
+├── algorithms-data.js  # Dữ liệu tĩnh: Định nghĩa lý thuyết, ưu/nhược điểm 4 thuật toán
+├── script.js           # Frontend Controller: Xử lý tương tác DOM, progress bar & gọi API
+├── scenarios.php       # Cấu hình Backend: Danh mục kịch bản SQL & hàm sinh ISBN
+├── api.php             # Backend Controller: Engine đo lường (bench/plan), sinh dữ liệu & routing
+├── db.php              # Kết nối cơ sở dữ liệu MySQL (schema InnoDB & GIS POINT)
+├── config.json         # Cấu hình chunk size và các mốc dữ liệu
+└── README.md           # Tài liệu hướng dẫn sử dụng & kiến trúc luồng
 ```
+
+---
+
+## 6. Kiến trúc & Luồng hoạt động (Execution Flow)
+
+Hệ thống được thiết kế theo mô hình tách biệt giữa **Dữ liệu tĩnh** và **Tầng thực thi**, giúp code gọn gàng và dễ nắm bắt luồng dữ liệu:
+
+```mermaid
+flowchart TD
+    subgraph Frontend["Frontend (Client Browser)"]
+        A[index.html] --> B[algorithms-data.js]
+        A --> C[script.js]
+        C -->|1. Khởi tạo| D[Load dropdown & Kiểm tra DB]
+        C -->|2. Tạo dữ liệu| E[Batch Progress Bar 50k/lô]
+        C -->|3. Chạy thử| F[Gửi Benchmark Request]
+        G[Render visualizer & EXPLAIN] <-- C
+    end
+
+    subgraph Backend["Backend (PHP Controller)"]
+        H[api.php] --> I[scenarios.php]
+        H --> J[db.php]
+        F -->|POST action=run| H
+        E -->|POST action=gen| H
+        D -->|POST action=meta| H
+    end
+
+    subgraph Database["MySQL (InnoDB)"]
+        H -->|Thực thi SQL| K[(Database index_demo)]
+    end
+```
+
+### Chi tiết các luồng chính:
+
+1. **Luồng Khởi tạo (Init Flow):**
+   - Trình duyệt tải `algorithms-data.js` (dữ liệu lý thuyết) rồi tới `script.js`.
+   - `script.js` gọi `POST api.php?action=meta` để lấy số lượng bản ghi hiện có và danh sách kịch bản từ `scenarios.php`.
+
+2. **Luồng Sinh dữ liệu (Data Generation Flow):**
+   - Client gọi `POST api.php?action=reset` để làm sạch bảng.
+   - Client chia nhỏ số dòng thành các chunk (50.000 dòng/lần) và lặp gọi `action=gen`.
+   - Backend gom mỗi 1.000 dòng vào một transaction kèm toạ độ địa lý thực tế (`POINT`) rồi `COMMIT`.
+   - Client cập nhật thanh tiến trình % trực tiếp trên giao diện.
+
+3. **Luồng Đo lường Benchmark (5-Step Benchmark Flow):**
+   - **Bước 1 (Full Scan):** Backend xoá index tương ứng (`DROP INDEX`), chạy hàm `bench()` lặp câu truy vấn mẫu tới khi đủ ~300ms để đo chính xác thời gian khi không có index.
+   - **Bước 2 (Build Index):** Thực thi lệnh `CREATE INDEX` (B-tree, Hash, Full-text, Spatial) và bấm giờ vi sai (hrtime) để tính thời gian tạo index.
+   - **Bước 3 (Index Scan):** Chạy lại câu truy vấn mẫu khi có index qua hàm `bench()`.
+   - **Bước 4 (Dung lượng):** Truy vấn `information_schema.TABLES` để lấy `INDEX_LENGTH`.
+   - **Bước 5 (Dọn dẹp):** `DROP INDEX` để trả lại trạng thái ban đầu cho các lần đo tiếp theo và gửi toàn bộ JSON về cho `renderBenchmarkResult()` trên giao diện.
