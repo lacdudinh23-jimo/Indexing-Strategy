@@ -85,10 +85,10 @@ const DB_HOST = '127.0.0.1', DB_USER = 'root', DB_PASS = '', DB_NAME = 'index_de
 ```text
 ├── index.html          # Giao diện người dùng (Dashboard & Visualizer)
 ├── style.css           # Giao diện CSS hiện đại (Dark/Modern theme)
-├── algorithms-data.js  # Dữ liệu tĩnh: Định nghĩa lý thuyết, ưu/nhược điểm 4 thuật toán
+├── algorithms-data.js  # Dữ liệu tĩnh: Định nghĩa lý thuyết, ưu/nhược điểm các thuật toán (gồm SARGable, MRR)
 ├── script.js           # Frontend Controller: Xử lý tương tác DOM, progress bar & gọi API
-├── scenarios.php       # Cấu hình Backend: Danh mục kịch bản SQL & hàm sinh ISBN
-├── api.php             # Backend Controller: Engine đo lường (bench/plan), sinh dữ liệu & routing
+├── scenarios.php       # Cấu hình Backend: Danh mục kịch bản SQL (gồm SARGable, MRR) & hàm sinh ISBN
+├── api.php             # Backend Controller: Engine đo lường (bench/plan, runSpecialMode cho SARGable/MRR), sinh dữ liệu & routing
 ├── db.php              # Kết nối cơ sở dữ liệu MySQL (schema InnoDB & GIS POINT)
 ├── config.json         # Cấu hình chunk size và các mốc dữ liệu
 └── README.md           # Tài liệu hướng dẫn sử dụng & kiến trúc luồng

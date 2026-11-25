@@ -241,7 +241,11 @@ function renderBenchmarkResult(r) {
   const widthWithIndex = Math.max(1, (timeWithIndex / maxTime) * 100).toFixed(1) + '%';
 
   const ratio = timeWithIndex > 0 ? timeNoIndex / timeWithIndex : 1;
-  const speedup = ratio.toFixed(ratio >= 10 ? 0 : 1);
+  const slower = ratio < 1; // phía B chậm hơn phía A (có thể xảy ra với MRR khi dữ liệu nằm hết trong RAM)
+  const shown = slower ? 1 / ratio : ratio;
+  const speedup = shown.toFixed(shown >= 10 ? 0 : 1);
+  const labelA = r.labelA || 'Không Index (Full Scan)';
+  const labelB = r.labelB || 'Có ' + (r.algo_name || 'Chỉ mục');
   const algoLabel = r.algo_name || 'Chỉ mục';
 
   // Hiển thị câu lệnh SQL: nếu 2 câu khác nhau (như Full-text: LIKE vs MATCH) thì so sánh rõ ràng
@@ -250,11 +254,11 @@ function renderBenchmarkResult(r) {
     sqlDisplayHtml = `
       <div class="sql-compare-box">
         <div class="sql-sub-box">
-          <span class="sql-tag danger">Không Index (LIKE):</span>
+          <span class="sql-tag danger">${esc(r.labelA || 'Không Index (LIKE)')}:</span>
           <code>${esc(r.sqlA)}</code>
         </div>
         <div class="sql-sub-box">
-          <span class="sql-tag success">Có Index (MATCH):</span>
+          <span class="sql-tag success">${esc(r.labelB || 'Có Index (MATCH)')}:</span>
           <code>${esc(r.sqlB)}</code>
         </div>
       </div>
@@ -280,7 +284,7 @@ function renderBenchmarkResult(r) {
       </div>
       <div class="speedup-badge">
         <span class="speedup-val">${speedup}×</span>
-        <span class="speedup-lbl">Nhanh hơn</span>
+        <span class="speedup-lbl">${slower ? 'Chậm hơn' : 'Nhanh hơn'}</span>
       </div>
     </div>
 
@@ -288,14 +292,14 @@ function renderBenchmarkResult(r) {
 
     <div class="benchmark-visualizer">
       <div class="bench-row">
-        <span class="bench-label">Không Index (Full Scan)</span>
+        <span class="bench-label">${esc(labelA)}</span>
         <div class="bar-track">
           <div class="bar-fill danger" style="width: ${widthNoIndex}"></div>
         </div>
         <span class="bench-time danger">${fmtTime(timeNoIndex)}</span>
       </div>
       <div class="bench-row">
-        <span class="bench-label">Có ${esc(algoLabel)}</span>
+        <span class="bench-label">${esc(labelB)}</span>
         <div class="bar-track">
           <div class="bar-fill success" style="width: ${widthWithIndex}"></div>
         </div>
@@ -316,15 +320,16 @@ function renderBenchmarkResult(r) {
         <span>Độ chính xác:</span>
         <strong>Lặp ${r.A.n} &amp; ${r.B.n} lần (đã bù trừ round-trip)</strong>
       </div>
+      ${r.note ? `<div class="stat-item"><span>Ghi chú:</span><strong>${esc(r.note)}</strong></div>` : ''}
     </div>
 
     <div class="explain-grid">
       <div class="explain-col">
-        <h4>Kế hoạch thực thi (EXPLAIN khi chưa đánh index)</h4>
+        <h4>${esc(r.planTitleA || 'Kế hoạch thực thi (EXPLAIN khi chưa đánh index)')}</h4>
         <pre>${esc(r.planA)}</pre>
       </div>
       <div class="explain-col">
-        <h4>Kế hoạch thực thi (EXPLAIN với ${esc(algoLabel)})</h4>
+        <h4>${esc(r.planTitleB || 'Kế hoạch thực thi (EXPLAIN với ' + algoLabel + ')')}</h4>
         <pre>${esc(r.planB)}</pre>
       </div>
     </div>
