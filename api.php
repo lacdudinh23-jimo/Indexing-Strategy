@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/scenarios.php';
+require_once __DIR__ . '/scenarios_sargable_mrr.php'; // Phần 4 (SARGable) + Phần 9 (MRR)
+require_once __DIR__ . '/bench_special.php';
 
 header('Content-Type: application/json; charset=utf-8');
 set_time_limit(0);
@@ -119,6 +121,11 @@ if ($action === 'run') {
 
   $n = dbRows($db);
   if ($n < 1) out(['error' => 'Chưa có dữ liệu. Bấm "Tạo lại dữ liệu mẫu" trước.'], 400);
+
+  // Các kịch bản có 'mode' (SARGable, MRR) dùng engine đo riêng trong bench_special.php
+  if (isset($sc['mode'])) {
+    out(runSpecialMode($db, $algoKey, $algo, $scenarioKey, $sc, $n));
+  }
 
   $idx = $sc['index'];
   $col = $sc['col'];
