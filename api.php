@@ -56,7 +56,173 @@ function runSpecialMode($db, $algoKey, $algo, $scKey, $sc, $n)
   if ($mode === 'query_compare')  return runQueryCompare($db, $algoKey, $algo, $scKey, $sc, $n);
   if ($mode === 'switch_compare') return runSwitchCompare($db, $algoKey, $algo, $scKey, $sc, $n);
   if ($mode === 'index_compare') return runIndexCompare($db, $algoKey, $algo, $scKey, $sc, $n);
+  if ($mode === 'cbo_join') return runCboJoinBenchmark($db, $algoKey, $algo, $scKey, $sc, $n);
   out(['error' => 'Mode không hợp lệ'], 400);
+}
+
+function cboEstimateJoin($left, $right)
+{
+  $rows = ($left['rows'] * $right['rows']) / max(1, $left['ndv'], $right['ndv']);
+  return ['rows' => $rows, 'ndv' => min($left['ndv'], $right['ndv'], $rows)];
+}
+
+function cboDynamicPlan($stats)
+{
+  $count = count($stats);
+  $dp = [];
+  for ($i = 0; $i < $count; $i++) {
+    $dp[1 << $i] = ['cost' => 0.0, 'rows' => $stats[$i]['rows'], 'ndv' => $stats[$i]['ndv'], 'order' => [$i]];
+  }
+
+  $fullMask = (1 << $count) - 1;
+  for ($mask = 1; $mask <= $fullMask; $mask++) {
+    if (!isset($dp[$mask])) continue;
+    for ($next = 0; $next < $count; $next++) {
+      $nextBit = 1 << $next;
+      if (($mask & $nextBit) !== 0) continue;
+      $nextMask = $mask | $nextBit;
+      $joined = cboEstimateJoin($dp[$mask], $stats[$next]);
+      $cost = $dp[$mask]['cost'] + $dp[$mask]['rows'] + $stats[$next]['rows'] + $joined['rows'];
+      $candidateOrder = array_merge($dp[$mask]['order'], [$next]);
+      $hasExistingPlan = isset($dp[$nextMask]);
+      $candidateStartsSmaller = !$hasExistingPlan
+        || $stats[$candidateOrder[0]]['rows'] < $stats[$dp[$nextMask]['order'][0]]['rows'];
+      $isLowerCost = !$hasExistingPlan || $cost < $dp[$nextMask]['cost'];
+      $isCheaperTie = $hasExistingPlan && abs($cost - $dp[$nextMask]['cost']) < 1e-9 && $candidateStartsSmaller;
+      if ($isLowerCost || $isCheaperTie) {
+        $dp[$nextMask] = [
+          'cost' => $cost,
+          'rows' => $joined['rows'],
+          'ndv' => $joined['ndv'],
+          'order' => $candidateOrder,
+        ];
+      }
+    }
+  }
+  return $dp[$fullMask];
+}
+
+function cboFixedOrderCost($stats, $order)
+{
+  $plan = ['cost' => 0.0, 'rows' => $stats[$order[0]]['rows'], 'ndv' => $stats[$order[0]]['ndv']];
+  for ($i = 1; $i < count($order); $i++) {
+    $next = $stats[$order[$i]];
+    $joined = cboEstimateJoin($plan, $next);
+    $plan = [
+      'cost' => $plan['cost'] + $plan['rows'] + $next['rows'] + $joined['rows'],
+      'rows' => $joined['rows'],
+      'ndv' => $joined['ndv'],
+    ];
+  }
+  return $plan['cost'];
+}
+
+function cboJoinSql($order, $tables)
+{
+  $from = '';
+  $firstAlias = null;
+  foreach ($order as $i => $relation) {
+    [$table, $alias] = $tables[$relation];
+    if ($i === 0) {
+      $from = "`$table` AS $alias";
+      $firstAlias = $alias;
+    } else {
+      $from .= " STRAIGHT_JOIN `$table` AS $alias ON $alias.join_key = $firstAlias.join_key";
+    }
+  }
+  return 'SELECT SQL_NO_CACHE COUNT(*) AS joined_rows FROM ' . $from;
+}
+
+function benchCboJoinPair($db, $sqlA, $sqlB)
+{
+  foreach ([$sqlA, $sqlB] as $sql) {
+    $r = $db->query($sql);
+    if (!$r) out(['error' => 'Lỗi chạy JOIN benchmark: ' . $db->error], 500);
+    $r->fetch_assoc();
+    $r->free();
+  }
+
+  $times = ['A' => 0.0, 'B' => 0.0];
+  $iterations = ['A' => 0, 'B' => 0];
+  $rows = ['A' => 0, 'B' => 0];
+  $queries = ['A' => $sqlA, 'B' => $sqlB];
+  $round = 0;
+  do {
+    $order = ($round % 2 === 0) ? ['A', 'B'] : ['B', 'A'];
+    foreach ($order as $arm) {
+      $start = hrtime(true);
+      $r = $db->query($queries[$arm]);
+      if (!$r) out(['error' => 'Lỗi chạy JOIN benchmark: ' . $db->error], 500);
+      $row = $r->fetch_assoc();
+      $rows[$arm] += (int)($row['joined_rows'] ?? 0);
+      $r->free();
+      $times[$arm] += (hrtime(true) - $start) / 1e6;
+      $iterations[$arm]++;
+    }
+    $round++;
+  } while (($times['A'] < 300 || $times['B'] < 300 || $round < 2) && $round < 20000);
+
+  return [
+    'A' => ['ms' => $times['A'] / $iterations['A'], 'n' => $iterations['A'], 'rows' => (int)round($rows['A'] / $iterations['A'])],
+    'B' => ['ms' => $times['B'] / $iterations['B'], 'n' => $iterations['B'], 'rows' => (int)round($rows['B'] / $iterations['B'])],
+  ];
+}
+
+function runCboJoinBenchmark($db, $algoKey, $algo, $scKey, $sc, $n)
+{
+  $sampleSize = min($n, 1200);
+  $tables = [
+    ['cbo_large', 'l'],
+    ['cbo_medium', 'm'],
+    ['cbo_small', 's'],
+  ];
+  $divisors = $sc['divisors'] ?? [1, 4, 8];
+  if (count($divisors) !== count($tables)) {
+    out(['error' => 'Cấu hình kịch bản CBO không hợp lệ'], 500);
+  }
+  $stats = [];
+  foreach ($tables as $i => [$table]) {
+    $divisor = max(1, (int)$divisors[$i]);
+    $filter = $divisor === 1 ? '' : " AND MOD(id, $divisor) = 0";
+    if (!$db->query("CREATE TEMPORARY TABLE `$table` ENGINE=InnoDB AS SELECT id AS join_key FROM books WHERE id <= $sampleSize" . $filter)) {
+      out(['error' => 'Không thể tạo bảng JOIN tạm: ' . $db->error], 500);
+    }
+    $result = $db->query("SELECT COUNT(*) AS row_count, COUNT(DISTINCT join_key) AS ndv FROM `$table`");
+    if (!$result) out(['error' => 'Không thể đọc thống kê JOIN: ' . $db->error], 500);
+    $row = $result->fetch_assoc();
+    $result->free();
+    $stats[] = ['rows' => (float)$row['row_count'], 'ndv' => (float)$row['ndv']];
+  }
+
+  $dpPlan = cboDynamicPlan($stats);
+  $baselineOrder = [0, 1, 2];
+  $labels = ['bảng lớn', 'bảng vừa', 'bảng nhỏ'];
+  $dpOrderText = implode(' → ', array_map(fn($i) => $labels[$i], $dpPlan['order']));
+  $sqlA = cboJoinSql($baselineOrder, $tables);
+  $sqlB = cboJoinSql($dpPlan['order'], $tables);
+  $planA = plan($db, $sqlA);
+  $planB = plan($db, $sqlB);
+  $measurements = benchCboJoinPair($db, $sqlA, $sqlB);
+  $A = $measurements['A'];
+  $B = $measurements['B'];
+
+  foreach ($tables as [$table]) $db->query("DROP TEMPORARY TABLE IF EXISTS `$table`");
+  $formatCost = fn($cost) => number_format($cost, 0, ',', '.');
+  return [
+    'algo' => $algoKey, 'algo_name' => $algo['label'], 'scenario' => $scKey, 'name' => $sc['name'],
+    'sql' => $sqlB, 'sqlA' => $sqlA, 'sqlB' => $sqlB, 'n' => $n, 'A' => $A, 'B' => $B,
+    'planA' => $planA, 'planB' => $planB, 'labelA' => $sc['labelA'], 'labelB' => $sc['labelB'],
+    'planTitleA' => 'EXPLAIN – thứ tự JOIN cố định, bảng lớn trước',
+    'planTitleB' => 'EXPLAIN – thứ tự JOIN do quy hoạch động chọn',
+    'metricType' => 'join',
+    'metrics' => [
+      ['label' => 'Thứ tự DP được chọn:', 'value' => $dpOrderText],
+      ['label' => 'Số dòng / NDV (lớn · vừa · nhỏ):', 'value' => implode(' · ', array_map(fn($s) => number_format($s['rows'], 0, ',', '.') . ' / ' . number_format($s['ndv'], 0, ',', '.'), $stats))],
+      ['label' => 'Cỡ mẫu mỗi bảng:', 'value' => number_format($sampleSize, 0, ',', '.') . ' dòng tối đa'],
+      ['label' => 'Chi phí ước lượng (cố định → DP):', 'value' => $formatCost(cboFixedOrderCost($stats, $baselineOrder)) . ' → ' . $formatCost($dpPlan['cost']) . ' đơn vị'],
+    ],
+    'note' => 'CBO minh họa dùng DP và thống kê COUNT/NDV đo từ dữ liệu; đây là mô hình chi phí giáo dục, không thay thế optimizer nội bộ. Bảng tạm không có index và giới hạn tối đa 1.200 dòng để benchmark an toàn trên MariaDB. EXPLAIN cho biết thuật toán JOIN thực tế; MariaDB 10.4 thường dùng nested-loop/block nested-loop, không phải Hash Join.',
+  ];
 }
 
 function indexColumnsSql($sc)

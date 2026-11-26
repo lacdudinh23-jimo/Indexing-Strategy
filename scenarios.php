@@ -298,6 +298,35 @@ $ALGOS = [
       ],
     ],
   ],
+  'cbo' => [
+    'label' => 'Cost-Based Optimizer & JOIN không Index',
+    'scenarios' => [
+      'cbo_three_way_join' => [
+        'name' => 'DP chọn thứ tự JOIN 3 bảng mẫu không có index',
+        'mode' => 'cbo_join',
+        'col' => 'join_key (bảng tạm)',
+        'divisors' => [1, 4, 8],
+        'labelA' => 'Thứ tự cố định: bảng lớn trước',
+        'labelB' => 'CBO (DP): thứ tự chi phí thấp nhất',
+      ],
+      'cbo_selective_join' => [
+        'name' => 'JOIN có bảng lọc mạnh (selectivity cao)',
+        'mode' => 'cbo_join',
+        'col' => 'join_key (bảng tạm)',
+        'divisors' => [1, 2, 12],
+        'labelA' => 'Thứ tự cố định: bảng lớn trước',
+        'labelB' => 'CBO (DP): bắt đầu từ bảng nhỏ nhất',
+      ],
+      'cbo_balanced_join' => [
+        'name' => 'JOIN ba bảng với kích thước cân bằng hơn',
+        'mode' => 'cbo_join',
+        'col' => 'join_key (bảng tạm)',
+        'divisors' => [1, 2, 3],
+        'labelA' => 'Thứ tự cố định: bảng lớn trước',
+        'labelB' => 'CBO (DP): thứ tự chi phí thấp nhất',
+      ],
+    ],
+  ],
   'icp' => [
     'label' => 'Index Condition Pushdown (ICP)',
     'scenarios' => [

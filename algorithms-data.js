@@ -127,5 +127,21 @@ const ALGORITHMS = {
       'Optimizer và engine phải hỗ trợ, và EXPLAIN mới xác nhận ICP thực sự được áp dụng.',
       'Thời gian thực tế phụ thuộc dữ liệu, cache và phiên bản MySQL/MariaDB.'
     ]
+  },
+  cbo: {
+    name: 'Cost-Based Optimizer & JOIN không Index',
+    badge: 'Đang hoạt động',
+    ready: true,
+    summary: '<strong>Cost-Based Optimizer (CBO)</strong> dùng số dòng và số giá trị phân biệt (NDV) để ước lượng kết quả JOIN. Demo áp dụng quy hoạch động (DP) để chọn thứ tự nối ba bảng tạm không có index, rồi so sánh với thứ tự cố định. Cỡ mẫu được giới hạn để chạy ổn định trên MariaDB/XAMPP.',
+    pros: [
+      'DP xét các cách nhóm và nối bảng dựa trên số liệu thực tế thay vì chỉ theo thứ tự ban đầu.',
+      'Hiển thị thống kê, chi phí ước lượng, thời gian chạy và EXPLAIN của hai thứ tự JOIN.',
+      'Dùng STRAIGHT_JOIN để đảm bảo DB thực thi đúng thứ tự đang được so sánh.'
+    ],
+    cons: [
+      'Ước lượng dựa trên NDV và giả định phân bố dữ liệu; kết quả có thể lệch khi dữ liệu thực tế bị skew.',
+      'MariaDB 10.4 thường dùng nested-loop/block nested-loop khi JOIN không có index; EXPLAIN cho biết thuật toán thực tế.',
+      'Đây là mô hình CBO minh họa, không thay thế optimizer nội bộ; Hash Join phụ thuộc phiên bản và engine DB.'
+    ]
   }
 };
