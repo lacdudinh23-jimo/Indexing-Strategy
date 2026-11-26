@@ -262,5 +262,73 @@ $ALGOS = [
         },
       ],
     ],
+  ],
+  'composite' => [
+    'label' => 'Composite Index',
+    'scenarios' => [
+      'comp_basic' => [
+        'name'       => 'Không index vs composite (genre, year, price)',
+        'index'      => 'idx_books_comp_genre_year_price',
+        'cols'       => ['genre', 'year', 'price'],
+        'col'        => 'genre, year, price',
+        'index_type' => 'USING BTREE',
+        'labelA'     => 'Không index (Full Scan)',
+        'labelB'     => 'Composite (genre, year, price)',
+        'query'      => function ($n) {
+          return "SELECT SQL_NO_CACHE id,title,author FROM books WHERE genre='Trinh thám' AND year BETWEEN 2010 AND 2020 AND price BETWEEN 100000 AND 150000";
+        },
+      ],
+      'comp_order' => [
+        'name'       => 'So sánh thứ tự cột trong composite index',
+        'mode'       => 'index_compare',
+        'col'        => 'genre, year, price',
+        'labelA'     => 'Sai thứ tự (price, genre, year)',
+        'labelB'     => 'Đúng thứ tự (genre, year, price)',
+        'indexA'     => [
+          'index' => 'idx_books_comp_price_genre_year',
+          'cols'  => ['price', 'genre', 'year'],
+        ],
+        'indexB'     => [
+          'index' => 'idx_books_comp_genre_year_price_order',
+          'cols'  => ['genre', 'year', 'price'],
+        ],
+        'query'      => function ($n) {
+          return "SELECT SQL_NO_CACHE id,title,author FROM books WHERE genre='Trinh thám' AND year BETWEEN 2010 AND 2020 AND price BETWEEN 100000 AND 150000";
+        },
+      ],
+    ],
+  ],
+  'icp' => [
+    'label' => 'Index Condition Pushdown (ICP)',
+    'scenarios' => [
+      'icp_price_genre' => [
+        'name'       => 'Cùng composite index: ICP tắt vs bật',
+        'mode'       => 'switch_compare',
+        'switch'     => 'icp',
+        'index'      => 'idx_books_icp_genre_year_price',
+        'cols'       => ['genre', 'year', 'price'],
+        'col'        => 'genre, year, price',
+        'index_type' => 'USING BTREE',
+        'labelA'     => 'ICP tắt (index_condition_pushdown=off)',
+        'labelB'     => 'ICP bật (index_condition_pushdown=on)',
+        'query'      => function ($n) {
+          return "SELECT SQL_NO_CACHE id,title,author FROM books WHERE genre='Trinh thám' AND year BETWEEN 2010 AND 2020 AND price BETWEEN 100000 AND 150000";
+        },
+      ],
+      'icp_like_title' => [
+        'name'       => 'LIKE "%Mùa%" trên title trong năm 2020: ICP tắt vs bật',
+        'mode'       => 'switch_compare',
+        'switch'     => 'icp',
+        'index'      => 'idx_books_icp_genre_year_title',
+        'cols'       => ['genre', 'year', 'title'],
+        'col'        => 'genre, year, title',
+        'index_type' => 'USING BTREE',
+        'labelA'     => 'ICP tắt (LIKE trên title)',
+        'labelB'     => 'ICP bật (LIKE trên title)',
+        'query'      => function ($n) {
+          return "SELECT SQL_NO_CACHE id,author FROM books FORCE INDEX (idx_books_icp_genre_year_title) WHERE genre='Trinh thám' AND year=2020 AND title LIKE '%Mùa%'";
+        },
+      ],
+    ],
   ]
 ];

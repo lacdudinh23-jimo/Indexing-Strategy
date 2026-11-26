@@ -95,5 +95,37 @@ const ALGORITHMS = {
       'Khi dữ liệu đã nằm trong RAM hoặc khoảng quét nhỏ, MRR có thể không nhanh hơn, thậm chí chậm hơn.',
       'Mặc định bộ tối ưu hiếm khi chọn MRR (<code>mrr_cost_based=on</code>); chỉ áp dụng cho truy vấn cần tra lại bảng gốc (không phải covering index).'
     ]
+  },
+  composite: {
+    name: 'Composite Index',
+    badge: 'Đang hoạt động',
+    ready: true,
+    summary: '<strong>Composite index</strong> lưu nhiều cột theo thứ tự; bộ tối ưu tận dụng tốt nhất tiền tố trái, thường đặt cột so sánh bằng trước cột khoảng.',
+    pros: [
+      'Một composite index có thể phục vụ nhiều điều kiện WHERE theo thứ tự tiền tố trái.',
+      'Thứ tự cột phù hợp giúp giảm phạm vi cần quét và có thể phục vụ nhiều truy vấn liên quan.'
+    ],
+    cons: [
+      'Thứ tự cột quan trọng; sau cột điều kiện khoảng đầu tiên, các cột sau thường không thu hẹp tiếp phạm vi quét.',
+      'Index rộng làm tăng dung lượng và chi phí ghi; kết quả còn phụ thuộc dữ liệu và optimizer.'
+    ]
+  },
+  icp: {
+    name: 'Index Condition Pushdown (ICP)',
+    badge: 'Đang hoạt động',
+    ready: true,
+    summary: '<strong>Index Condition Pushdown</strong> cho phép storage engine kiểm tra điều kiện trên các cột index trước khi đọc đầy đủ dòng trong bảng. Đây là tối ưu truy vấn, không phải một loại index riêng; demo dùng composite B-tree để so sánh.',
+    pros: [
+      'Có thể giảm số lần đọc dòng đầy đủ khi điều kiện trên index loại bỏ nhiều kết quả.',
+      'Bật/tắt qua <code>optimizer_switch</code> và đối chiếu trong <code>EXPLAIN</code>.',
+      'So sánh dùng cùng truy vấn và cùng index, chỉ thay đổi trạng thái ICP.',
+      'Kịch bản LIKE dùng `(genre, title)`: điều kiện bằng trên genre tìm prefix, còn LIKE trên title được kiểm tra trong index.'
+    ],
+    cons: [
+      'Chỉ hữu ích khi truy vấn cần đọc các cột ngoài index; covering index không cần tra lại dòng.',
+      'LIKE với wildcard đầu (`%từ%`) không thể tự tìm kiếm bằng B-tree; ICP chỉ được minh họa ở đây nhờ điều kiện bằng trên genre và index `(genre, title)`.',
+      'Optimizer và engine phải hỗ trợ, và EXPLAIN mới xác nhận ICP thực sự được áp dụng.',
+      'Thời gian thực tế phụ thuộc dữ liệu, cache và phiên bản MySQL/MariaDB.'
+    ]
   }
 };
