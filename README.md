@@ -8,6 +8,7 @@
 5. **SARGable Query** và **Multi-Range Read (MRR)**
 6. **Composite Index**
 7. **Index Condition Pushdown (ICP)** — tối ưu hóa hoạt động trên index, không phải một loại index riêng
+8. **Cost-Based Optimizer (CBO) & JOIN không Index** — chọn thứ tự nối bảng theo thống kê và chi phí
 
 ---
 
@@ -78,6 +79,11 @@ const DB_HOST = '127.0.0.1', DB_USER = 'root', DB_PASS = '', DB_NAME = 'index_de
    - **Composite Index:**
      - So sánh Full Scan với composite `(genre, year, price)`.
      - So sánh cùng truy vấn với thứ tự index `(price, genre, year)` và `(genre, year, price)`.
+   - **Cost-Based Optimizer & JOIN không Index:**
+     - Có ba kịch bản: phân bố mặc định, bảng lọc mạnh và kích thước ba bảng cân bằng hơn.
+     - So sánh thứ tự JOIN cố định với thứ tự DP chọn dựa trên số dòng và NDV đo từ dữ liệu.
+     - Bảng tạm không có index, mỗi bảng tối đa 1.200 dòng để phù hợp MariaDB/XAMPP; kết quả hiển thị chi phí mô hình, thời gian và EXPLAIN.
+     - MariaDB 10.4 thường dùng nested-loop/block nested-loop cho JOIN không index; Hash Join chỉ có ở một số phiên bản/engine khác, hãy kiểm tra EXPLAIN.
    - **Index Condition Pushdown (ICP):**
      - So sánh `index_condition_pushdown=off/on` trên cùng composite index; EXPLAIN cần hiện `Using index condition` khi optimizer áp dụng ICP.
      - Truy vấn ICP chọn `title, author` (các cột ngoài index), dùng điều kiện bằng trên `genre`, khoảng trên `year` và lọc `price`. Cấu trúc này giúp kiểm tra điều kiện còn lại ở index trước khi đọc dòng bảng. Kết quả phụ thuộc phiên bản DB, thống kê và optimizer; hãy đối chiếu EXPLAIN thay vì chỉ dựa vào thời gian.

@@ -211,12 +211,18 @@ async function runBenchmark() {
   if (!scenarioKey) return;
 
   setBusy(true);
-  setStatus('#runStatus', 'Đang thực thi: Quét tuần tự → Tạo chỉ mục → Đo lại hiệu năng...', '');
+  setStatus('#runStatus', 'Đang thực thi benchmark...', '');
 
   try {
     const res = await api('run', { algo: algoKey, scenario: scenarioKey });
     renderBenchmarkResult(res);
-    setStatus('#runStatus', 'Kiểm thử hoàn tất! Index mẫu đã tự động được dọn dẹp.', 'success');
+    setStatus(
+      '#runStatus',
+      res.metricType === 'join'
+        ? 'Kiểm thử JOIN hoàn tất! Các bảng tạm đã được dọn dẹp.'
+        : 'Kiểm thử hoàn tất! Index mẫu đã tự động được dọn dẹp.',
+      'success'
+    );
   } catch (err) {
     setStatus('#runStatus', 'Lỗi: ' + err.message, 'err');
   } finally {
@@ -247,17 +253,22 @@ function renderBenchmarkResult(r) {
   const labelA = r.labelA || 'Không Index (Full Scan)';
   const labelB = r.labelB || 'Có ' + (r.algo_name || 'Chỉ mục');
   const algoLabel = r.algo_name || 'Chỉ mục';
-  const indexMetricsHtml = Number.isFinite(r.build_msA)
-    ? `
-      <div class="stat-item"><span>Build index A:</span><strong>${fmtTime(r.build_msA)}</strong></div>
-      <div class="stat-item"><span>Build index B:</span><strong>${fmtTime(r.build_msB)}</strong></div>
-      <div class="stat-item"><span>INDEX_LENGTH A:</span><strong>${fmtBytes(r.index_bytesA)}</strong></div>
-      <div class="stat-item"><span>INDEX_LENGTH B:</span><strong>${fmtBytes(r.index_bytesB)}</strong></div>
-    `
-    : `
-      <div class="stat-item"><span>Thời gian build index:</span><strong>${fmtTime(r.build_ms)}</strong></div>
-      <div class="stat-item"><span>Dung lượng chỉ mục:</span><strong>${fmtBytes(r.index_bytes)}</strong></div>
-    `;
+  const indexMetricsHtml = r.metricType === 'join'
+    ? ''
+    : Number.isFinite(r.build_msA)
+      ? `
+        <div class="stat-item"><span>Build index A:</span><strong>${fmtTime(r.build_msA)}</strong></div>
+        <div class="stat-item"><span>Build index B:</span><strong>${fmtTime(r.build_msB)}</strong></div>
+        <div class="stat-item"><span>INDEX_LENGTH A:</span><strong>${fmtBytes(r.index_bytesA)}</strong></div>
+        <div class="stat-item"><span>INDEX_LENGTH B:</span><strong>${fmtBytes(r.index_bytesB)}</strong></div>
+      `
+      : `
+        <div class="stat-item"><span>Thời gian build index:</span><strong>${fmtTime(r.build_ms)}</strong></div>
+        <div class="stat-item"><span>Dung lượng chỉ mục:</span><strong>${fmtBytes(r.index_bytes)}</strong></div>
+      `;
+  const extraMetricsHtml = (r.metrics || []).map((metric) => `
+    <div class="stat-item"><span>${esc(metric.label)}</span><strong>${esc(metric.value)}</strong></div>
+  `).join('');
 
   // Hiển thị câu lệnh SQL: nếu 2 câu khác nhau (như Full-text: LIKE vs MATCH) thì so sánh rõ ràng
   let sqlDisplayHtml = '';
@@ -320,6 +331,7 @@ function renderBenchmarkResult(r) {
 
     <div class="result-stats-row">
       ${indexMetricsHtml}
+      ${extraMetricsHtml}
       <div class="stat-item">
         <span>Độ chính xác:</span>
         <strong>Lặp ${r.A.n} &amp; ${r.B.n} lần (đã bù trừ round-trip)</strong>
