@@ -29,27 +29,25 @@ function plan($db, $sql)
 function bench($db, $mk, $min)
 {
   $r = $db->query($mk());
-  if ($r) {
-    $r->fetch_all();
-    $r->free(); // Chạy nóng (warm-up) bỏ qua kết quả đầu
-  }
+  if (!$r) out(['error' => 'Lỗi chạy truy vấn benchmark: ' . $db->error], 500);
+  $r->fetch_all();
+  $r->free(); // Chạy nóng (warm-up) bỏ qua kết quả đầu
   $n = 0;
   $rows = 0;
   $t0 = hrtime(true);
   do {
     $r = $db->query($mk());
-    if ($r) {
-      $rows += $r->num_rows;
-      $r->fetch_all();
-      $r->free();
-    }
+    if (!$r) out(['error' => 'Lỗi chạy truy vấn benchmark: ' . $db->error], 500);
+    $rows += $r->num_rows;
+    $r->fetch_all();
+    $r->free();
     $n++;
     $el = (hrtime(true) - $t0) / 1e6;
   } while (($el < 300 || $n < $min) && $n < 20000);
   return ['ms' => $el / $n, 'n' => $n, 'rows' => (int)round($rows / $n)];
 }
 
-// ================= ENGINE ĐO CHO PHẦN 4 (SARGable) VÀ PHẦN 9 (MRR) =================
+// ================= ENGINE ĐO CHO CÁC CHẾ ĐỘ SO SÁNH ĐẶC BIỆT =================
 // Dùng cho các kịch bản có khóa 'mode' trong scenarios.php; tái sử dụng plan() và bench() ở trên.
 
 function runSpecialMode($db, $algoKey, $algo, $scKey, $sc, $n)
@@ -57,18 +55,33 @@ function runSpecialMode($db, $algoKey, $algo, $scKey, $sc, $n)
   $mode = $sc['mode'];
   if ($mode === 'query_compare')  return runQueryCompare($db, $algoKey, $algo, $scKey, $sc, $n);
   if ($mode === 'switch_compare') return runSwitchCompare($db, $algoKey, $algo, $scKey, $sc, $n);
+  if ($mode === 'index_compare') return runIndexCompare($db, $algoKey, $algo, $scKey, $sc, $n);
   out(['error' => 'Mode không hợp lệ'], 400);
+}
+
+function indexColumnsSql($sc)
+{
+  $cols = $sc['cols'] ?? [$sc['col']];
+  return implode(', ', array_map(fn($col) => "`$col`", $cols));
+}
+
+function createIndexSql($sc)
+{
+  $idx = $sc['index'];
+  $cols = indexColumnsSql($sc);
+  $type = $sc['index_type'] ?? 'USING BTREE';
+  if ($type === 'FULLTEXT') return "CREATE FULLTEXT INDEX `$idx` ON books($cols)";
+  if ($type === 'SPATIAL') return "CREATE SPATIAL INDEX `$idx` ON books($cols)";
+  return "CREATE INDEX `$idx` $type ON books($cols)";
 }
 
 // Tạo index và trả về thời gian build (ms). Báo lỗi JSON nếu thất bại.
 function buildIndexTimed($db, $sc)
 {
   $idx = $sc['index'];
-  $col = $sc['col'];
-  $type = $sc['index_type'] ?? 'USING BTREE';
-  $db->query("DROP INDEX $idx ON books"); // đảm bảo sạch (bỏ qua lỗi nếu chưa có)
+  $db->query("DROP INDEX `$idx` ON books"); // đảm bảo sạch (bỏ qua lỗi nếu chưa có)
   $t = hrtime(true);
-  if (!$db->query("CREATE INDEX $idx $type ON books($col)")) {
+  if (!$db->query(createIndexSql($sc))) {
     out(['error' => 'Lỗi tạo index: ' . $db->error], 500);
   }
   return (hrtime(true) - $t) / 1e6;
@@ -114,6 +127,39 @@ function runQueryCompare($db, $algoKey, $algo, $scKey, $sc, $n)
   ];
 }
 
+/* ---------- Composite index: so sánh thứ tự cột trên cùng truy vấn ---------- */
+function runIndexCompare($db, $algoKey, $algo, $scKey, $sc, $n)
+{
+  $sql = $sc['query']($n);
+  $measure = function ($definition) use ($db, $sql) {
+    $build = buildIndexTimed($db, $definition);
+    $db->query('ANALYZE TABLE books');
+    $plan = plan($db, $sql);
+    $result = bench($db, fn() => $sql, 50);
+    $size = indexBytes($db);
+    $db->query('DROP INDEX `' . $definition['index'] . '` ON books');
+    return ['build_ms' => $build, 'plan' => $plan, 'result' => $result, 'size' => $size];
+  };
+
+  $A = $measure($sc['indexA']);
+  $B = $measure($sc['indexB']);
+
+  return [
+    'algo' => $algoKey, 'algo_name' => $algo['label'], 'scenario' => $scKey, 'name' => $sc['name'],
+    'sql' => preg_replace('/ SQL_NO_CACHE/', '', $sql),
+    'sqlA' => preg_replace('/ SQL_NO_CACHE/', '', $sql),
+    'sqlB' => preg_replace('/ SQL_NO_CACHE/', '', $sql),
+    'n' => $n, 'A' => $A['result'], 'B' => $B['result'],
+    'build_msA' => $A['build_ms'], 'build_msB' => $B['build_ms'],
+    'index_bytesA' => $A['size'], 'index_bytesB' => $B['size'],
+    'planA' => $A['plan'], 'planB' => $B['plan'],
+    'labelA' => $sc['labelA'], 'labelB' => $sc['labelB'],
+    'planTitleA' => 'EXPLAIN – index ' . implode(', ', $sc['indexA']['cols']),
+    'planTitleB' => 'EXPLAIN – index ' . implode(', ', $sc['indexB']['cols']),
+    'note' => 'Cùng một câu SQL; mỗi lượt chỉ tồn tại một composite index để so sánh thứ tự cột.',
+  ];
+}
+
 /* ---------- PHẦN 9: cùng index, cùng kiểu truy vấn, bật/tắt MRR ---------- */
 
 // Đo xen kẽ A/B, mỗi lượt dùng khoảng ngẫu nhiên MỚI -> hai phía công bằng, không phía nào "hưởng cache" của phía kia.
@@ -126,24 +172,29 @@ function benchPair($db, $mk, $swA, $swB, $minMs = 400, $minIter = 20, $maxIter =
 
   // warm-up: nạp metadata/plan, không tính vào kết quả
   foreach (['A', 'B'] as $arm) {
-    $db->query("SET SESSION optimizer_switch='" . $sw[$arm] . "'");
+    if (!$db->query("SET SESSION optimizer_switch='" . $sw[$arm] . "'")) {
+      out(['error' => 'Không thể cấu hình optimizer_switch: ' . $db->error], 500);
+    }
     $r = $db->query($mk());
-    if ($r) { $r->fetch_all(); $r->free(); }
+    if (!$r) out(['error' => 'Lỗi chạy truy vấn benchmark: ' . $db->error], 500);
+    $r->fetch_all();
+    $r->free();
   }
 
   $i = 0;
   do {
     $order = ($i % 2 === 0) ? ['A', 'B'] : ['B', 'A'];
     foreach ($order as $arm) {
-      $db->query("SET SESSION optimizer_switch='" . $sw[$arm] . "'");
+      if (!$db->query("SET SESSION optimizer_switch='" . $sw[$arm] . "'")) {
+        out(['error' => 'Không thể cấu hình optimizer_switch: ' . $db->error], 500);
+      }
       $sql = $mk();
       $t0 = hrtime(true);
       $r = $db->query($sql);
-      if ($r) {
-        $rows[$arm] += $r->num_rows;
-        $r->fetch_all();
-        $r->free();
-      }
+      if (!$r) out(['error' => 'Lỗi chạy truy vấn benchmark: ' . $db->error], 500);
+      $rows[$arm] += $r->num_rows;
+      $r->fetch_all();
+      $r->free();
       $t[$arm] += (hrtime(true) - $t0) / 1e6;
       $c[$arm]++;
     }
@@ -158,11 +209,18 @@ function benchPair($db, $mk, $swA, $swB, $minMs = 400, $minIter = 20, $maxIter =
 
 function runSwitchCompare($db, $algoKey, $algo, $scKey, $sc, $n)
 {
-  // MariaDB (mặc định của XAMPP) khác MySQL 8 ở tên cờ và dòng Extra của EXPLAIN
   $isMaria = stripos($db->server_info, 'MariaDB') !== false;
-  $swOff = 'mrr=off';
-  $swOn = $isMaria ? 'mrr=on,mrr_sort_keys=on,mrr_cost_based=off' : 'mrr=on,mrr_cost_based=off';
-  $swReset = $isMaria ? 'mrr=default,mrr_sort_keys=default,mrr_cost_based=default' : 'mrr=default,mrr_cost_based=default';
+  $switch = $sc['switch'] ?? 'mrr';
+  if ($switch === 'icp') {
+    $swOff = 'index_condition_pushdown=off';
+    $swOn = 'index_condition_pushdown=on';
+    $swReset = 'index_condition_pushdown=default';
+  } else {
+    // MariaDB (mặc định của XAMPP) khác MySQL 8 ở dòng Extra của EXPLAIN
+    $swOff = 'mrr=off';
+    $swOn = $isMaria ? 'mrr=on,mrr_sort_keys=on,mrr_cost_based=off' : 'mrr=on,mrr_cost_based=off';
+    $swReset = $isMaria ? 'mrr=default,mrr_sort_keys=default,mrr_cost_based=default' : 'mrr=default,mrr_cost_based=default';
+  }
 
   $mk = fn() => $sc['query']($n);
   $sample = $mk();
@@ -170,27 +228,42 @@ function runSwitchCompare($db, $algoKey, $algo, $scKey, $sc, $n)
   $build = buildIndexTimed($db, $sc);
   $db->query('ANALYZE TABLE books');
 
-  $db->query("SET SESSION optimizer_switch='$swOff'");
+  if (!$db->query("SET SESSION optimizer_switch='$swOff'")) {
+    out(['error' => 'Không thể tắt optimizer option: ' . $db->error], 500);
+  }
   $planA = plan($db, $sample);
-  $db->query("SET SESSION optimizer_switch='$swOn'");
+  if (!$db->query("SET SESSION optimizer_switch='$swOn'")) {
+    out(['error' => 'Không thể bật optimizer option: ' . $db->error], 500);
+  }
   $planB = plan($db, $sample);
 
   $res = benchPair($db, $mk, $swOff, $swOn);
   $size = indexBytes($db);
 
-  $db->query("SET SESSION optimizer_switch='$swReset'");
-  $db->query('DROP INDEX ' . $sc['index'] . ' ON books');
+  if (!$db->query("SET SESSION optimizer_switch='$swReset'")) {
+    out(['error' => 'Không thể khôi phục optimizer option: ' . $db->error], 500);
+  }
+  $db->query('DROP INDEX `' . $sc['index'] . '` ON books');
 
   $clean = preg_replace('/ SQL_NO_CACHE/', '', $sample);
+  $planTitleA = "EXPLAIN – $swOff";
+  $planTitleB = "EXPLAIN – $swOn";
+  if ($switch === 'mrr') {
+    $planTitleB .= $isMaria ? ' (tìm \'Rowid-ordered scan\')' : ' (tìm \'Using MRR\')';
+  } else {
+    $planTitleB .= ' (tìm \'Using index condition\')';
+  }
   return [
     'algo' => $algoKey, 'algo_name' => $algo['label'], 'scenario' => $scKey, 'name' => $sc['name'],
     'sql' => $clean, 'sqlA' => $clean, 'sqlB' => $clean,
     'n' => $n, 'A' => $res['A'], 'B' => $res['B'], 'build_ms' => $build, 'index_bytes' => $size,
     'planA' => $planA, 'planB' => $planB,
     'labelA' => $sc['labelA'], 'labelB' => $sc['labelB'],
-    'planTitleA' => "EXPLAIN – $swOff",
-    'planTitleB' => "EXPLAIN – $swOn" . ($isMaria ? ' (tìm \'Rowid-ordered scan\')' : ' (tìm \'Using MRR\')'),
-    'note' => ($isMaria ? 'MariaDB' : 'MySQL') . ' ' . $db->server_info . '. Mỗi lượt đo dùng khoảng ngẫu nhiên mới, xen kẽ tắt/bật MRR.',
+    'planTitleA' => $planTitleA,
+    'planTitleB' => $planTitleB,
+    'note' => ($isMaria ? 'MariaDB' : 'MySQL') . ' ' . $db->server_info . ($switch === 'mrr'
+      ? '. Mỗi lượt đo dùng khoảng ngẫu nhiên mới, xen kẽ tắt/bật MRR.'
+      : '. Cùng truy vấn và composite index; đo xen kẽ ICP tắt/bật.'),
   ];
 }
 
@@ -294,15 +367,7 @@ if ($action === 'run') {
 
   // Bước 2: Tạo index và đo thời gian build
   $t = hrtime(true);
-  if ($idxType === 'FULLTEXT') {
-    $createSql = "CREATE FULLTEXT INDEX $idx ON books($col)";
-  } elseif ($idxType === 'SPATIAL') {
-    $createSql = "CREATE SPATIAL INDEX $idx ON books($col)";
-  } else {
-    $createSql = "CREATE INDEX $idx $idxType ON books($col)";
-  }
-
-  if (!$db->query($createSql)) {
+  if (!$db->query(createIndexSql($sc))) {
     out(['error' => 'Lỗi tạo index: ' . $db->error], 500);
   }
   $build = (hrtime(true) - $t) / 1e6;
@@ -318,7 +383,7 @@ if ($action === 'run') {
   $size = (int)($q[0] ?? 0);
 
   // Bước 5: Dọn dẹp index sau khi đo xong
-  $db->query("DROP INDEX $idx ON books");
+  $db->query("DROP INDEX `$idx` ON books");
 
   out([
     'algo'        => $algoKey,
@@ -334,7 +399,9 @@ if ($action === 'run') {
     'build_ms'    => $build,
     'index_bytes' => $size,
     'planA'       => $planA,
-    'planB'       => $planB
+    'planB'       => $planB,
+    'labelA'      => $sc['labelA'] ?? null,
+    'labelB'      => $sc['labelB'] ?? null
   ]);
 }
 

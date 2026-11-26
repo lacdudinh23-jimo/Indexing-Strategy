@@ -7,7 +7,7 @@
  * ============================================================================
  * 1. Khởi tạo (init):
  *    - Gán sự kiện click cho các nút: Sinh dữ liệu (#genBtn), Chạy thử (#runBtn), Xoá kết quả (#clearBtn).
- *    - Nạp danh mục 4 thuật toán từ `algorithms-data.js` vào dropdown #algoSelect.
+ *    - Nạp danh mục thuật toán và kỹ thuật từ `algorithms-data.js` vào dropdown #algoSelect.
  *    - Đọc cấu hình từ `config.json` (nếu có).
  *    - Gọi `api('meta')` để kiểm tra kết nối DB, lấy số dòng hiện có và nạp các kịch bản tương ứng.
  * 
@@ -247,6 +247,17 @@ function renderBenchmarkResult(r) {
   const labelA = r.labelA || 'Không Index (Full Scan)';
   const labelB = r.labelB || 'Có ' + (r.algo_name || 'Chỉ mục');
   const algoLabel = r.algo_name || 'Chỉ mục';
+  const indexMetricsHtml = Number.isFinite(r.build_msA)
+    ? `
+      <div class="stat-item"><span>Build index A:</span><strong>${fmtTime(r.build_msA)}</strong></div>
+      <div class="stat-item"><span>Build index B:</span><strong>${fmtTime(r.build_msB)}</strong></div>
+      <div class="stat-item"><span>INDEX_LENGTH A:</span><strong>${fmtBytes(r.index_bytesA)}</strong></div>
+      <div class="stat-item"><span>INDEX_LENGTH B:</span><strong>${fmtBytes(r.index_bytesB)}</strong></div>
+    `
+    : `
+      <div class="stat-item"><span>Thời gian build index:</span><strong>${fmtTime(r.build_ms)}</strong></div>
+      <div class="stat-item"><span>Dung lượng chỉ mục:</span><strong>${fmtBytes(r.index_bytes)}</strong></div>
+    `;
 
   // Hiển thị câu lệnh SQL: nếu 2 câu khác nhau (như Full-text: LIKE vs MATCH) thì so sánh rõ ràng
   let sqlDisplayHtml = '';
@@ -308,14 +319,7 @@ function renderBenchmarkResult(r) {
     </div>
 
     <div class="result-stats-row">
-      <div class="stat-item">
-        <span>Thời gian build index:</span>
-        <strong>${fmtTime(r.build_ms)}</strong>
-      </div>
-      <div class="stat-item">
-        <span>Dung lượng chỉ mục:</span>
-        <strong>${fmtBytes(r.index_bytes)}</strong>
-      </div>
+      ${indexMetricsHtml}
       <div class="stat-item">
         <span>Độ chính xác:</span>
         <strong>Lặp ${r.A.n} &amp; ${r.B.n} lần (đã bù trừ round-trip)</strong>
@@ -361,7 +365,7 @@ async function init() {
   $('#clearBtn').onclick = clearResults;
   $('#algoSelect').onchange = updateSelectedAlgorithm;
 
-  // Render 4 thuật toán vào dropdown
+  // Render các thuật toán và kỹ thuật vào dropdown
   $('#algoSelect').innerHTML = Object.entries(ALGOS_REF)
     .map(
       ([key, algo]) =>

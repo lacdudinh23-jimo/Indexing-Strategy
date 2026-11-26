@@ -1,10 +1,13 @@
 # MySQL Indexing Strategy – Benchmark & Visualizer
 
-Ứng dụng web trực quan hóa và đo lường (benchmark) hiệu năng truy vấn trên MySQL (InnoDB engine) với 4 chiến lược chỉ mục:
+Ứng dụng web trực quan hóa và đo lường (benchmark) hiệu năng truy vấn trên MySQL (InnoDB engine), gồm 4 loại index chính và các kỹ thuật truy vấn/tối ưu bổ sung:
 1. **B-Tree Index** (Cây cân bằng)
 2. **Hash Index** (Bảng băm)
 3. **Full-Text Index** (Chỉ mục toàn văn)
 4. **R-Tree Index** (Spatial Index - Chỉ mục không gian đa chiều)
+5. **SARGable Query** và **Multi-Range Read (MRR)**
+6. **Composite Index**
+7. **Index Condition Pushdown (ICP)** — tối ưu hóa hoạt động trên index, không phải một loại index riêng
 
 ---
 
@@ -51,7 +54,7 @@ const DB_HOST = '127.0.0.1', DB_USER = 'root', DB_PASS = '', DB_NAME = 'index_de
 
 ---
 
-## 4. Hướng dẫn sử dụng & 4 Chiến lược Index hỗ trợ
+## 4. Hướng dẫn sử dụng & các chiến lược Index
 
 1. **Sinh dữ liệu thử nghiệm:**
    - Chọn số lượng bản ghi (100.000, 500.000 hoặc 1.000.000 dòng).
@@ -72,9 +75,16 @@ const DB_HOST = '127.0.0.1', DB_USER = 'root', DB_PASS = '', DB_NAME = 'index_de
      - *ST_Contains()*: Tìm sách nằm trong đa giác bao quanh khu vực.
      - *ST_Within()*: Tìm sách có toạ độ nằm trong ranh giới đa giác.
      - *ST_Intersects()*: Tìm sách có vị trí toạ độ giao cắt / trùng khớp với vùng không gian.
+   - **Composite Index:**
+     - So sánh Full Scan với composite `(genre, year, price)`.
+     - So sánh cùng truy vấn với thứ tự index `(price, genre, year)` và `(genre, year, price)`.
+   - **Index Condition Pushdown (ICP):**
+     - So sánh `index_condition_pushdown=off/on` trên cùng composite index; EXPLAIN cần hiện `Using index condition` khi optimizer áp dụng ICP.
+     - Truy vấn ICP chọn `title, author` (các cột ngoài index), dùng điều kiện bằng trên `genre`, khoảng trên `year` và lọc `price`. Cấu trúc này giúp kiểm tra điều kiện còn lại ở index trước khi đọc dòng bảng. Kết quả phụ thuộc phiên bản DB, thống kê và optimizer; hãy đối chiếu EXPLAIN thay vì chỉ dựa vào thời gian.
+     - Kịch bản `icp_like_title` dùng index `(genre, year, title)` với `genre='Trinh thám'`, `year=2020` và `title LIKE '%Mùa%'`; các điều kiện bằng giới hạn prefix tìm kiếm, còn ICP kiểm tra `LIKE` trên title tại index. Wildcard đầu tự nó không tạo index range.
 
 3. **Đọc kết quả so sánh:**
-   - **Tốc độ truy vấn:** So sánh thời gian thực thi giữa **Không có Index** (Full Scan) và **Có Index** (B-tree / Hash / Fulltext / Spatial R-Tree).
+   - **Tốc độ truy vấn:** So sánh thời gian thực thi giữa **Không có Index** (Full Scan) và **Có Index** (B-tree / Hash / Fulltext / Spatial R-Tree / Composite).
    - **EXPLAIN Plan:** Xem chi tiết kế hoạch thực thi của MySQL (`ALL` vs `ref`, `range`, `fulltext`).
    - **Chi phí (Trade-offs):** Thời gian build index và dung lượng đĩa chiếm dụng.
 
@@ -85,10 +95,10 @@ const DB_HOST = '127.0.0.1', DB_USER = 'root', DB_PASS = '', DB_NAME = 'index_de
 ```text
 ├── index.html          # Giao diện người dùng (Dashboard & Visualizer)
 ├── style.css           # Giao diện CSS hiện đại (Dark/Modern theme)
-├── algorithms-data.js  # Dữ liệu tĩnh: Định nghĩa lý thuyết, ưu/nhược điểm các thuật toán (gồm SARGable, MRR)
+├── algorithms-data.js  # Dữ liệu tĩnh: Lý thuyết và ưu/nhược điểm các thuật toán/kỹ thuật
 ├── script.js           # Frontend Controller: Xử lý tương tác DOM, progress bar & gọi API
-├── scenarios.php       # Cấu hình Backend: Danh mục kịch bản SQL (gồm SARGable, MRR) & hàm sinh ISBN
-├── api.php             # Backend Controller: Engine đo lường (bench/plan, runSpecialMode cho SARGable/MRR), sinh dữ liệu & routing
+├── scenarios.php       # Cấu hình Backend: Danh mục kịch bản SQL & hàm sinh ISBN
+├── api.php             # Backend Controller: Engine đo lường (bench/plan, runSpecialMode), sinh dữ liệu & routing
 ├── db.php              # Kết nối cơ sở dữ liệu MySQL (schema InnoDB & GIS POINT)
 ├── config.json         # Cấu hình chunk size và các mốc dữ liệu
 └── README.md           # Tài liệu hướng dẫn sử dụng & kiến trúc luồng
@@ -136,9 +146,10 @@ flowchart TD
    - Backend gom mỗi 1.000 dòng vào một transaction kèm toạ độ địa lý thực tế (`POINT`) rồi `COMMIT`.
    - Client cập nhật thanh tiến trình % trực tiếp trên giao diện.
 
-3. **Luồng Đo lường Benchmark (5-Step Benchmark Flow):**
+3. **Luồng Đo lường Benchmark:**
    - **Bước 1 (Full Scan):** Backend xoá index tương ứng (`DROP INDEX`), chạy hàm `bench()` lặp câu truy vấn mẫu tới khi đủ ~300ms để đo chính xác thời gian khi không có index.
-   - **Bước 2 (Build Index):** Thực thi lệnh `CREATE INDEX` (B-tree, Hash, Full-text, Spatial) và bấm giờ vi sai (hrtime) để tính thời gian tạo index.
+   - **Bước 2 (Build Index):** Thực thi lệnh `CREATE INDEX` (B-tree, Hash, Full-text, Spatial, Composite) và bấm giờ vi sai (hrtime) để tính thời gian tạo index.
    - **Bước 3 (Index Scan):** Chạy lại câu truy vấn mẫu khi có index qua hàm `bench()`.
    - **Bước 4 (Dung lượng):** Truy vấn `information_schema.TABLES` để lấy `INDEX_LENGTH`.
    - **Bước 5 (Dọn dẹp):** `DROP INDEX` để trả lại trạng thái ban đầu cho các lần đo tiếp theo và gửi toàn bộ JSON về cho `renderBenchmarkResult()` trên giao diện.
+   - Các mode so sánh riêng chạy cùng truy vấn với thứ tự index khác nhau (`index_compare`) hoặc bật/tắt optimizer switch (MRR/ICP), đo xen kẽ hai phía và hiển thị EXPLAIN riêng.
